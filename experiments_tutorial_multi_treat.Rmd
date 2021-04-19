@@ -1,0 +1,938 @@
+---
+title: 'ALP301: Multiple hypothesis testing tutorial'
+author: "YOUR NAME"
+date: "April 2021"
+output: 
+  html_document:
+    highlight: haddock
+    theme: journal
+    number_sections: no
+    toc: yes
+    toc_depth: 3
+    toc_float: yes
+---
+
+<style>
+div.blue { background-color:#e6f0ff; border-radius: 5px; padding: 20px;}
+</style>
+
+<style>
+div.medblue { background-color: #b3d1ff; border-radius: 5px; padding: 5px;}
+</style>
+
+<style>
+div.darkblue { background-color: #9ac2ff; border-radius: 5px; padding: 5px;}
+</style>
+
+## Learning Objective
+In this tutorial, you will learn about the "Multiple Comparisons Problem" and methods to address it, when you conduct multiple hypothesis testing at the same time.[^1]
+
+[^1]: This tutorial was originally developed by Molly Offer-Westort, Niall Keleher, and Susan Athey for the Spring 2020 course, ALP301 Data-Driven Impact.
+
+
+```{r setup, include = FALSE}
+set.seed(95126)
+knitr::opts_chunk$set(
+  eval = TRUE,
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE
+)
+```
+
+---
+
+### Load required packages
+
+```{r load_packages}
+# Ensure that pacman is installed for package management and loading.
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(tidyverse)
+pacman::p_load(randomizr)
+pacman::p_load(estimatr)
+pacman::p_load(kableExtra)
+pacman::p_load(ggthemes)
+pacman::p_load(reshape2)
+```
+
+### Notation
+
+We will use the same notation and definitions defined in the previous tutorial. Here, however, we will make some adjustments for an experiment with multiple treatments. 
+
+Again, we will consider a hypothetical data set with $N$ observations. Each observation in our data set is indexed by $i$, and is represented by:
+
++ $W_{i} \in \{1, \dots, K\}$: a variable indicating which of $K$ treatment arms an individual was assigned
++ $Y_{i}^{obs} \in \mathbb{R}$: a real-valued variable indicating the observed outcome for that individual
+
+We make use of the _potential outcomes_ framework of Rubin (1974), and define the following random variables:
+
++ $Y_{i}(1)$: the outcome unit $i$ would attain if they received treatment 1
++ $Y_{i}(2)$: the outcome unit $i$ would attain if they received treatment 2
++ $\dots$
++ $Y_{i}(K)$: the outcome unit $i$ would attain if they received treatment K
+
+This results in a table of potential outcomes as produced below, where black values ($Y_{i}(k)$) are the ones we observe, and grayed-out values (<font color="lightgray">$Y_{i}(k)$</font>) are the ones we do not observe. 
+
+$i$ | $W_i$ | $Y_{i}(1)$ | $Y_{i}(2)$ | $\cdots$ | $Y_{i}(K)$ |
+|:----: |:----: |:----:|:----:|:----:|:----:|
+1 |2 |<font color="lightgray">$Y_{1}(1)$</font> | $Y_{1}(2)$ |$\cdots$ | <font color="lightgray">$Y_{1}(K)$</font> |
+2 | K | <font color="lightgray">$Y_{2}(1)$</font> | <font color="lightgray">$Y_{2}(2)$</font> |$\cdots$ |$Y_{2}(K)$|
+$\cdots$ | $\cdots$ | $\cdots$   | $\cdots$ |$\cdots$ |$\cdots$
+N | 1 | $Y_{N}(1)$ | <font color="lightgray">$Y_{N}(2)$</font> |$\cdots$ | <font color="lightgray">$Y_{N}(K)$</font> |
+
+Using the potential outcome notation above, the observed outcome can also be written as
+
+$$Y_{i}^{obs} = \sum_{w = 1}^K 1\{W_{i} = w\} \times Y_{i}(w)$$
+
+We denote $Y_{i}^{obs}$ simply as $Y_{i}$ from now on.
+
+
+## Multiple Hypotheses
+
+Suppose we are running an experiment with a control condition, where $W = 0$ and three treatment interventions, where $W = 1, 2, 3$, for a total of four conditions. 
+
+You might be interested in testing if any of the three treatment interventions work better than the control condition. In this case, we would measure three individual treatment effects, as the difference between each expected potential outcomes under each treatment condition and the control condition. 
+$$
+\tau_1 = \textrm{E}[Y(1)-Y(0)]\\
+\tau_2 = \textrm{E}[Y(2)-Y(0)]\\
+\tau_2 = \textrm{E}[Y(3)-Y(0)]
+$$
+Let us suppose that outcomes under each condition are normally distributed, with mean 0 and standard deviation 1 (note that this means that all average treatment effects are 0). We will start with an experiment size of 1000, with treatment randomly assigned. 
+
+```{r experiment}
+N <- 1000 # experiment size
+K <- 4 # number of experimental conditions including the control
+
+mean_vals <- rep(0, K) # true means; rep(x, k) replicates the value in x by k times
+# outcome matrix of dimension N by K
+ymat <- mapply(rnorm, n = N, mean = mean_vals) #mapply(FUN, ...) applies function FUN; rnorm(n, mean, var) generates normal random variable
+
+# complete random assignment; ensure each condition gets balanced assignment
+w <- complete_ra(N, m_each = rep(N / 4, 4))
+levels(w) <- 0:3 # name the treatment levels
+table(w)
+
+# observe outcomes based on treatment assignment
+yobs <- ymat[cbind(1:N, as.numeric(w))] #[row, col] indexes the matrix elements
+```
+
+Following the previous logic, we might then want to test a hypothesis about each of those treatment conditions separately. For example, we might want to test the hypothesis that each treatment effect is greater than zero:
+$$
+H_0: \tau_w = 0 \\
+H_A: \tau_w > 0 \\
+\text{For each }w = 1, 2, 3
+$$
+We can test each of these hypotheses separately. Recall that when we test a single hypothesis, we calculate a test statistic and reject the null hypothesis $H_0$ if the test statistic is in the relevant rejection region.
+
+The test-statistic Z for each test is:
+$$
+Z = \frac{\hat{\tau}_w}{\sigma \sqrt{2\times K} /\sqrt{N} }
+$$
+To estimate $\tau_w$, we'll use the difference in means:
+$$
+\hat{\tau}_w = \bar{Y}(w) - \bar{Y}(0)
+$$
+```{r Zstats}
+# means under each condition
+ybars <- aggregate(yobs, by = list(w), mean)$x # aggregate(x, by=list, FUN) applied function to x by group. In this case, we are taking the means by treatment arm
+sigma <- sqrt(sum((yobs - ybars[w])^2) / (N - K)) # calculation of standard deviation
+
+# difference in means estimates
+taus <- ybars[-1] - ybars[1] # subtracting the control outcome from each of the three treatment outcomes
+
+# Z-stat
+Z_stat <- taus / (sigma * sqrt(2 * K / N)) # calculation of Z stat according to formula above
+Z_stat
+```
+
+**Review**: If we set the significance level $\alpha =  0.05$, we would say that our estimate achieves statistical significance if we would observe an estimate that large only 5% of the time under the null distribution. The null distribution is the distribution of the statistic if the null hypothesis were true. 
+
+Another way of saying this is, if the true treatment effect size is actually zero, we will get an estimate this large 1/20 times just by chance!
+
+
+```{r critical1}
+alpha <- 0.05
+# critical value for the one-sided test
+critical_value <- qnorm(1 - alpha) #qnorm(p) gives the value, v, such that prob of the variable being <= v is equal to p
+critical_value
+```
+
+For the one-sided hypotheses above and a significance value of $\alpha =  0.05$, we would reject the null hypothesis for each arm if the test statistic is greater that 1.645--here, it is not, for any of our arms.
+
+```{r reject}
+Z_stat > critical_value # check if Z stat is greater than critical value, or if it falls into the rejection area
+```
+
+### Problem with multiplicity
+
+What happens if we conduct multiple hypotheses testing at the same time? 
+
+Suppose all of our treatment effects are zero: $\tau_1 = \tau_2 = \tau_3 = 0$ and all of the tests are independent. Given the standard significance level $\alpha=0.05$, the probability that any given estimate is statistically distinguishable from zero is then $0.05$. Therefore, the probability that we do not reject a given null, i.e., that the single estimate is *not* distinguishable from zero, is $1-0.05 = 0.95$. 
+
+As we conducting three independent tests, the probability that _none of the three_ estimates is significant would be $(0.95)^3$. Therefore, the probability that we find _at least one_ estimate that is statistically distinguishable from zero, which equals 1 minus the probability that *none* of our estimates were significant, would be $1-(0.95)^3 = 0.143$. That is pretty high considering we initially set our significance level at 0.05. Moreover, this is only with three treatment arms! If we keep on increasing the number of treatment effects we are testing, the probability that we find _at least one_ false positive keeps on increasing. 
+
+To sum it up, if we use the standard critical value to determine the rejection region, the chance that _at least one_ of our treatment effects is statistically significant just by chance can become very high.
+
+
+### FWER vs. FDR
+
+When we are testing multiple hypotheses, we need to consider the *types* of mistakes we can make. With multiple hypothesis testing, we are primarily concerned with "false discoveries", also termed Type I error, which is when we think we have found an effect when the effect is not there. 
+
+Again, the significance value of $\alpha =  0.05$ is the bound on Type I error for a single test. 
+
+<div class = "blue">
+**Family Wise Error Rate (FWER)** is the probability of making *at least one* false discovery. Above, we showed that the FWER for our three independent tests was 0.143. 
+</div>
+
+<div class = "blue">
+**False Discovery Rate (FDR)** is the overall percent of discoveries that are false. So if our tests tell us that four effects are statistically significant, but in fact two of them are truly nulls, our FDR is 50%.
+
+</div>
+
+
+Different methods will account for these different approaches to measuring Type I error rates. In general, correcting for FWER is *more* restrictive or conservative. 
+
+FDR controls can be especially helpful where your “discoveries” may be a screening device for further exploration. For example, you may want to select some of the product prototypes for further investigation. This often applies to cases when there are costs associated with further testing. If you decide to select those that are shown to have significant results, a high FDR means that you would need to spend resources to investigate the useless prototypes that are falsely declared effective. FDR controls can help you reduce this probability.
+
+On the other hand, if you plan to make final recommendations based on the analysis, we may want to be more conservative and guard against making *any* false conclusions, especially if the status quo is relatively good. In this case, researchers would choose to use FWER correction.
+
+We will now introduce methods for controlling FWER and FDR. In all of the methods, the idea involves setting a stricter criteria for rejecting the null, so that false discoveries are less likely. Note that this comes at the expense of more Type II errors (failure to reject nulls when they are false).
+
+### Bonferroni Correction for FWER
+
+An easy way to account for FWER is to use a Bonferonni correction. In general, this is also the most conservative method. In this method, if you are conducting $n$ tests and you want to target a significance level of $\alpha = 0.05$, we use $\alpha/n$ instead. So, as we are making 3 comparisons here, and using one-sided hypotheses, we would use $0.05/3 = 0.0167$ when calculating our critical value. 
+
+```{r critical3}
+alpha <- 0.05 # significance level
+n <- 3 # number of tests
+critical_value <- qnorm(1 - alpha / n) # qnorm(p) returns the boundary value c such that P(X<c)=p
+critical_value
+```
+Note that our new critical value of `r round(critical_value,3)` is more extreme than the critical value without the correction, 1.645. 
+
+To check if this method actually works, note that before correction, our chance of finding at least one false positive under the null was 0.143, now it is 1 - (1 - 0.05/3)^3 $\approx$ 0.05. Therefore, it falls back to our targeted overall significance level!
+
+**Note:** If we are using two-sided hypotheses, than we would need to use $\alpha/2n$ instead.
+
+```{r critical_twosided}
+alpha <- 0.05 # significance level
+n <- 3 # number of tests
+critical_value <- qnorm(1 - alpha / (2*n)) # qnorm(p) returns the boundary value c such that P(X<c)=p
+critical_value
+```
+The critical value now is even more extreme.
+
+### Holm Correction for FWER (Advanced topic)
+
+_Advanced topic for reference only_:
+
+The Bonferonni correction is valid if all of the tests are independent--but that's very unlikely here, because $\bar{Y}(0)$ factors into each of our tests statistics. It may actually be _too_ conservative. An alternative approach to correcting for FWER is the Holm correction.
+
+In the Holm correction, we calculate our p-values, order them from smallest to largest indexed by $k$, and order our hypotheses to match. We find the smallest index value $k^*$ where,
+$$
+p_{k}>\frac{\alpha}{n+1−k}.
+$$
+```{r pvalues}
+p_values <- 1-pnorm(Z_stat) # pnorm(c) returns the probability P(X<c)
+cutoff <- alpha/(n+1-1:n) # Holm cutoffs on the RHS of the equation above
+min(which(sort(p_values)>cutoff)) # find the smallest index k such that the above inequality is satisfied to define rejection area
+```
+Our cutoffs are `r round(cutoff, 3)`. We reject all null hypothesis with indicies $<k^*$, and fail to reject for indices $\ge k^*$.
+
+If the minimum indexed p-value that meets this criteria is 1, do not reject any null hypotheses--that's the case we are in here. Therefore, we fail to reject any of the nulls. If no p-values meet this criteria, we reject *all* null hypotheses. 
+
+_**Aside:** Note that above, we used the normal approximation for the distribution. `lm` functions in R use the Student t Distribution, to account for the fact that sample means are only approximately normal with small samples._
+```{r pstudent}
+# p-values under student t distribution
+pt(Z_stat, N-K, lower = FALSE)
+```
+_If we had used the p-values under the Student t Distribution, our test would have turned out the same._
+
+
+### Benjamini-Hochberg Correction for FDR
+
+Now let us turn to controls for FDR. 
+
+**Reminder**: Here we want to control the percentage of discoveries that are false. This applies well to situations where you are prototyping, rather than arriving at a final conclusion.
+
+To control the FDR, we can use the Benjamini-Hochberg correction method. If we want to ensure that $FDR<\alpha$, we again calculate our p-values, order them from smallest to largest indexed by $k$, and order our hypotheses to match. But now, we want to find the largest p-value $p_k^*$ such that,
+$$
+p_{k}\le\frac{k }{n}\alpha.
+$$
+
+```{r pvaluesbh}
+cutoff <- (1:n)/(n)*alpha # B-H cutoffs on the RHS of the equation above
+cutoff
+which(sort(p_values)<cutoff) # find the largest pvalue such that the above inequality is satisfied to define rejection area
+```
+Our cutoffs are `r round(cutoff, 3)`. (You might notice a parallel with the cutoffs used in the Holm correction, but this will not be the case with all number of comparisons. Check out the cutoffs if we were making 10 comparisons.) 
+
+We reject all null hypotheses with $p \leq p_k^*$, and fail to reject for $p > p_k^*$. Here, none of our p-values are under the cutoffs, so we again fail to reject all of the nulls. 
+
+
+### Example 1
+
+Let us consider an example experiment, with 500 treatment arms, 1 control, and total sample size $N=10000$. 
+
+Assume that half of the treatments are effective (treatment effects are non-zero), and the other half are not (treatment effects are zero). We will focus on changes in the outcome. In other words, we will use two-sided tests for each of the treatment arm.
+
+```{r fwer-fdr}
+N <- 10000 # experiment size
+n <- 500 # number of comparisons
+mu_0 <- 0 # control mean
+mus <- rep(c(0,.5), each = n/2) # treatment means, half with 0 effect, half with 0.5 effect
+taus <- mus-mu_0 # treatment effects
+
+# potential outcomes under each of the different treatments
+Y0 <- rnorm(n = N, mean = mu_0, sd = 1) # outcomes under control
+Ys <- cbind(t(sapply(Y0, `+`, taus)), Y0) # control is the last column
+
+## Run the experiment to get treatment assignment
+Z.sim <- complete_ra(N = N, num_arms = n + 1) # complete random assignment
+# Observed response is consistent with treatment assigned
+Y.sim <- Ys[cbind(1:N, as.numeric(Z.sim))]
+# save the outcomes and treatment in a data frame
+frame.sim <- data.frame(Y.sim, Z.sim)
+
+# Get p-values from comparing each treatment to control
+p_values <- rep(NA, n)
+for(i in 1:n){
+  Tx <- paste0('T', i) # Treatment condition
+  lmx <- lm(Y.sim ~ Z.sim == Tx, #(remember control is in the last column)
+                    data = subset(frame.sim, Z.sim %in% c(Tx, "T501") )) # extracting data that is either in the control treatment of in Tx treatment
+  # extract the relevant p-value
+  p_values[i] <- summary(lmx)$coeff[2,4]
+}
+names(p_values) <- paste0(rep(c('F', 'T'), each = n/2), rep(1:(n/2), times = 2) ) # Nulls of the first half are true; Nulls of the second half are false
+
+# False discoveries
+table(p_values[1:(n/2)]<alpha) # check the first half, which are ineffective
+# Real discoveries
+table(p_values[(n/2+1):n]<alpha) # check the second half, which are effective
+```
+Half of our effects are actually zero effects; among these, using uncorrected tests, we find `r length(which(p_values[1:(n/2)]<0.05))` false discoveries. Among the other half of our effects, we find `r length(which(p_values[(n/2+1):n]<0.05))` real discoveries. 
+
+Let's see what our results look like under the various correction methods. 
+```{r test_bon}
+# Bonferroni
+# False discoveries
+table(p_values[1:(n/2)]<alpha/(2*n))
+# Real discoveries
+table(p_values[(n/2+1):n]<alpha/(2*n))
+```
+Using the Bonferonni correction, we get rid of all of our false discoveries, but we also demolish detection of all of our real discoveries. Ouch!
+
+```{r test_holm}
+# Holm
+cutoff <- alpha/(n+1-1:n)
+
+test_h <- sort(p_values)<cutoff
+# False discoveries
+table(test_h[grepl('F', names(test_h))])
+# Real discoveries
+table(test_h[grepl('T', names(test_h))])
+```
+Using the Holm correction, we get rid of all of our false discoveries, and we retain `r length(which(test_h[grepl('T', names(test_h))]))` of our real discoveries. 
+
+
+```{r test_bh}
+# Benjamini-Hochberg
+cutoff <- (1:n)/(n)*alpha
+test_bh <- sort(p_values)<cutoff
+# False discoveries
+table(test_bh[grepl('F', names(test_bh))])
+# Real discoveries
+table(test_bh[grepl('T', names(test_bh))])
+```
+Using the Benjamini-Hochberg correction, we get rid of all of our false discoveries, and we retain `r length(which(test_bh[grepl('T', names(test_bh))]))` of our real discoveries. 
+
+Example 1 summary: with the example, we can see the difference in how conservative our methods for correction are. In general, the Bonferroni method is the most conservative at the expense of higher probabilities of failure to reject false nulls. The FDR control method using BH algorithm is the least conservative. They serve different purposes, where the former aims to control the FWER, while the latter aims to control the FDR.
+
+
+### Power
+
+In the previous Experiments tutorial, we defined power:
+
+<div class = "blue">
+Formally, **power is the probability that we will reject the null hypothesis when the alternative hypothesis is true.** I.e., 
+$$
+\textrm{Power}:  1- \beta = \Pr\left( Z \ge z_{\alpha} | H_A \right)
+$$
+
+<!-- $$ -->
+<!-- =  \Phi\left( \frac{\tau - \theta_0 }{2\sigma/\sqrt{n}} - z_{\alpha} \right) -->
+<!-- $$ -->
+where $\beta$ is our probability of Type II error--that we fail to reject the null hypothesis when the alternative is actually true. 
+</div>
+
+**Here we consider power as the probability that we will reject _at least one_ of the null hypotheses under the alternative hypotheses that we posed. **
+
+_**Aside:** With multiple treatments, we could consider alternative definitions of power, such as the probability that we reject ALL of the null hypotheses. This approach is addressed in  Egap's [Power Analysis Simulations in R](https://egap.org/resource/script-power-analysis-simulations-in-r/), and is included as a secondary output in the function below._
+
+
+### Example 2: Power Calculator
+EGAP (Evidence in Governance and Politics) has simulation code for a number of power calculations [here](https://egap.org/resource/script-power-analysis-simulations-in-r/). We adapt code from one of these examples below. 
+
+We will now write out a function that does power calculations according to the power formula above, for one- and two-tailed hypotheses. 
+
+Assume that you have conducted an experiment and will now conduct a power calculation. To do that, you will need to figure out what are the outcome values under each of the treatments and control condition, what is the combined variance or standard deviation, the total sample size of the experiment, the significance level that you have chosen for the hypothesis tests, the type of hypothesis ('two.tailed', 'greater', or 'lower', where 'greater' tests that the treatment has a mean that is greater than the control mean, and 'lower' that the treatment has a lower mean), and the correction method for multiple hypothesis testing ('Bonferroni', 'Holm', 'BH').
+
+```{r power_calculator}
+
+# power calculation
+power_calculator <- function(mus, # treatment means
+                             mu_0, # control mean
+                             sigma = 1, # standard deviation
+                             alpha = 0.05, # significance level
+                             N, # experiment size
+                             hypothesis = "two.tailed", # type of hypothesis
+                             method = "Bonferroni" # correction method for multiple hypothesis testing
+) {
+  n <- length(mus) # number of comparisons
+  # The tails of our statistics distributions
+  # Assume equal number of observations in each treatment arm
+  lowertails <- (abs(mus - mu_0) * sqrt(N)) / (sigma * sqrt(2 * (n + 1))) # modified Z stat since sample size in each treatment arm becomes N/(n+1)
+  uppertails <- -1 * lowertails
+  if (hypothesis == "two.tailed") {
+    # HA: \mus != \mu_0
+    
+    if (method == "Bonferroni"){
+        pwr_atleastone <- max(pnorm(lowertails - qnorm(1 - (alpha / 2) / n), # dividing by n as in Bonferroni correction
+                                  lower.tail = TRUE
+      ) +
+        1 - pnorm(uppertails - qnorm(1 - (alpha / 2) / n),
+                  lower.tail = FALSE
+        )) # Calculation of power, the probability that z score is outside of the critical values on both sides
+      pwr_all <- min(pnorm(lowertails - qnorm(1 - (alpha / 2) / n),
+                           lower.tail = TRUE
+      ) +
+        1 - pnorm(uppertails - qnorm(1 - (alpha / 2) / n),
+                  lower.tail = FALSE
+        )) # use min here as we want to ensure that ALL are significant
+    }else if (method == "Holm"){
+      cutoff_Holm <- alpha/(n+1-1:n) # Holm cutoffs
+      # At least one is significant if min p value is smaller than first cutoff value
+      pwr_atleastone <- max(pnorm(lowertails - qnorm(1 - cutoff_Holm[1]),
+                                lower.tail = TRUE)
+                            +
+                            1 - pnorm(uppertails - qnorm(1 - cutoff_Holm[1]),
+                                    lower.tail = FALSE))
+      # All are significant if the largest pvalue is smaller than last cutoff
+      pwr_all <- min(pnorm(lowertails - qnorm(1 - cutoff_Holm[n]),
+                                lower.tail = TRUE
+                           )+
+                           1 - pnorm(uppertails - qnorm(1 - cutoff_Holm[n]),
+                                lower.tail = FALSE)
+                       )
+    }else if (method == "BH"){
+      cutoff_BH <- (1:n)/(n)*alpha # B-H cutoffs
+      # At least one is significant if min p value is smaller than first cutoff value
+      pwr_atleastone <- max(pnorm(lowertails - qnorm(1 - cutoff_BH[1]),
+                                lower.tail = TRUE)
+                            +
+                            1 - pnorm(uppertails - qnorm(1 - cutoff_BH[1]),
+                                    lower.tail = FALSE))
+      # All are significant if the largest pvalue is smaller than last cutoff
+      pwr_all <- min(pnorm(lowertails - qnorm(1 - cutoff_BH[n]),
+                                lower.tail = TRUE
+                           )+
+                           1 - pnorm(uppertails - qnorm(1 - cutoff_BH[n]),
+                                lower.tail = FALSE))
+    }
+
+  } else if (hypothesis == "greater") {
+    # HA: \mus > \mu_0
+    
+    if (method == "Bonferroni"){
+      pwr_atleastone <- max(pnorm(lowertails - qnorm(1 - alpha / n),
+                                lower.tail = TRUE))
+      pwr_all <- min(pnorm(lowertails - qnorm(1 - alpha / n), lower.tail = TRUE))
+    }else if (method == "Holm"){
+      
+      cutoff_Holm <- alpha/(n+1-1:n) # Holm cutoffs
+      # At least one is significant if min p value is smaller than first cutoff value
+      pwr_atleastone <- max(pnorm(lowertails - qnorm(1 - cutoff_Holm[1]),
+                                lower.tail = TRUE))
+      # All are significant if the largest pvalue is smaller than last cutoff
+      pwr_all <- min(pnorm(lowertails - qnorm(1 - cutoff_Holm[n]),
+                                lower.tail = TRUE))
+      
+    }else if (method == "BH"){
+      # For FDR control
+      cutoff_BH <- (1:n)/(n)*alpha # B-H cutoffs
+      # At least one is significant if min p value is <= first cutoff value
+      pwr_atleastone <- max(pnorm(lowertails - qnorm(1 - cutoff_BH[1]),
+                                lower.tail = TRUE))
+      # All are significant if the largest pvalue is smaller than last cutoff
+      pwr_all <- min(pnorm(lowertails - qnorm(1 - cutoff_BH[n]),
+                                lower.tail = TRUE))
+    }
+
+  } else if (hypothesis == "lower") {
+    # HA: \mus < \mu_0
+    
+    if (method == "Bonferroni"){
+      pwr_atleastone <- max(1 - pnorm(uppertails - qnorm(1 - alpha / n),
+                                    lower.tail = FALSE))
+      pwr_all <- min(1 - pnorm(uppertails - qnorm(1 - alpha / n), lower.tail = FALSE))
+    }else if (method == "Holm"){
+      cutoff_Holm <- alpha/(n+1-1:n) # Holm cutoffs
+      # At least one is significant if the smallest p value is smaller than first cutoff value
+      pwr_atleastone <- max(1 - pnorm(uppertails - qnorm(1 - cutoff_Holm[1]),
+                                    lower.tail = FALSE))
+      # All are significant if all are smaller than last cutoff
+      pwr_all <- min(1 - pnorm(uppertails - qnorm(1 - cutoff_Holm[n]),
+                                lower.tail = FALSE))
+    }else if (method == "BH"){
+      # For FDR control
+      cutoff_BH <- (1:n)/(n)*alpha # B-H cutoffs
+      # At least one is significant if the smallest p value is smaller than first cutoff, 
+      pwr_atleastone <- max(1 - pnorm(uppertails - qnorm(1 - cutoff_BH[1]),
+                                lower.tail = FALSE))
+      # All are significant if all are smaller than last cutoff
+      pwr_all <- min(1 - pnorm(uppertails - qnorm(1 - cutoff_BH[n]),
+                                lower.tail = FALSE))
+    }
+    
+  }
+  return(c(pwr_atleastone, pwr_all))
+}
+```
+
+The first output of the function is the power for rejecting _at least one_ of the null hypotheses. The second output of the function is the power for rejecting _all_ of the null hypotheses. 
+
+Suppose in your experiment with 300 observations, $\mu_0 = 0$, $\mu_1 = 0.2$, and $\mu_2 = 0.3$. Moreover, you decide to test the one-sided hypotheses that $\mu_1 > \mu_0$ and $\mu_2 > \mu_0$. 
+
+```{r power_example}
+mus <- c(0.2, 0.3) # means from the treatment arms
+mu_0 <- 0 # mean from control
+sigma <- 1
+hypothesis <- "greater"
+methods <- c("Bonferroni", "Holm", "BH")
+
+# save power for each method
+pwrs <- matrix(nrow=length(methods), ncol=2)
+
+# use power calculator above
+for (i in 1:length(methods)) {
+  m = methods[i]
+  pwrs[i,] <- power_calculator(
+    mus = mus,
+    mu_0 = mu_0,
+    sigma = 1,
+    alpha = 0.05,
+    N = 300,
+    hypothesis = hypothesis,
+    method = m
+  )
+}
+
+pwrs # power for rejecting at least one, and for rejecting all, for each method
+
+```
+
+Our power for rejecting _at least one_ of the null hypotheses is `r round(pwrs[1][1], 3)` -- if we ran this experiment many times, in only `r round(pwrs[1][1], 3)*100` percent of our experiments would we find an effect so that we could reject one of the null hypotheses. Notice that the three correction methods (Bonferroni, Holm or BH) all give the same level of power for detecting at least one of the null hypotheses. 
+
+However, the power for rejecting all of the null hypotheses is only `r round(pwrs[1][2], 3)` with the Bonferroni correction, lower than under the other two correction methods. From this you can also see that Bonferroni is the most conservative.
+
+**Reminder**: Suppose now that you are planning another experiment and you would want to ensure that you have enough participants to be able to detect an effect of your treatment when it is actually present.
+
+How many participants do we need to attain a certain level of power?
+
+We can run the function over a range of possible experiment sizes, and find where we get an experiment that has the power that we are targeting.
+
+```{r power_analytical}
+poss.ns <- seq(50, 1500) # potential experiment size
+
+# apply power calculator over all the potential experiment sizes, using Bonferroni method
+pwr_mat_Bonferroni <- sapply(poss.ns, function(n) {
+  power_calculator(
+    mus = mus,
+    mu_0 = mu_0,
+    sigma = sigma,
+    alpha = 0.05,
+    N = n,
+    hypothesis = hypothesis,
+    method = "Bonferroni"
+  )
+})
+
+# apply power calculator over all the potential experiment sizes, using FDR
+pwr_mat_FDR <- sapply(poss.ns, function(n) {
+  power_calculator(
+    mus = mus,
+    mu_0 = mu_0,
+    sigma = sigma,
+    alpha = 0.05,
+    N = n,
+    hypothesis = hypothesis,
+    method = "BH"
+  )
+})
+
+## plot power over experiment size
+# define the data for plotting by combining the different powers calculated above
+gg_df <- data.frame(N = poss.ns, `Bonferroni: At least one` = pwr_mat_Bonferroni[1, ], `Bonferroni: All` = pwr_mat_Bonferroni[2, ], `FDR: At least one` = pwr_mat_FDR[1, ], `FDR: All` = pwr_mat_FDR[2, ]) # save data for plotting
+
+gg_df <- gg_df %>% melt(
+  id.vars = "N", value.name = "Power", # name the y-axis
+  variable.name = "Type" # name the legends
+)
+# plotting of the saved power data: Power against N, by Type
+gg_power <- ggplot(gg_df, aes(x = N, y = Power, group = Type, col = Type)) +
+  geom_line() +
+  # vertical line segment indicating size to achieve 0.8 power
+  geom_segment(aes(
+    x = poss.ns[min(which(pwr_mat_Bonferroni[1, ] > 0.8))],
+    y = min(pwr_mat_Bonferroni[1, ]),
+    xend = poss.ns[min(which(pwr_mat_Bonferroni[1, ] > 0.8))],
+    yend = pwr_mat_Bonferroni[1, min(which(pwr_mat_Bonferroni[1, ] > 0.8))]
+  ),
+  data = gg_df, colour = "green", lty = "dashed" 
+  ) +
+  # horizontal line segment from min sample size plotted to the required sample size
+  geom_segment(aes(
+    x = min(poss.ns),
+    y = pwr_mat_Bonferroni[1, min(which(pwr_mat_Bonferroni[1, ] > 0.8))],
+    xend = poss.ns[min(which(pwr_mat_Bonferroni[1, ] > 0.8))],
+    yend = pwr_mat_Bonferroni[1, min(which(pwr_mat_Bonferroni[1, ] > 0.8))]
+  ),
+  data = gg_df, colour = "green", lty = "dashed"
+  ) +
+  # vertical line segment indicating size to achieve 0.8 power
+  geom_segment(aes(
+    x = poss.ns[min(which(pwr_mat_Bonferroni[2, ] > 0.8))],
+    y = min(pwr_mat_Bonferroni[2, ]),
+    xend = poss.ns[min(which(pwr_mat_Bonferroni[2, ] > 0.8))],
+    yend = pwr_mat_Bonferroni[2, min(which(pwr_mat_Bonferroni[2, ] > 0.8))]
+  ),
+  data = gg_df, colour = "green", lty = "dashed"
+  ) +
+  # horizontal line segment from min sample size plotted to the required sample size
+  geom_segment(aes(
+    x = min(poss.ns),
+    y = pwr_mat_Bonferroni[2, min(which(pwr_mat_Bonferroni[2, ] > 0.8))],
+    xend = poss.ns[min(which(pwr_mat_Bonferroni[2, ] > 0.8))],
+    yend = pwr_mat_Bonferroni[2, min(which(pwr_mat_Bonferroni[2, ] > 0.8))]
+  ),
+  data = gg_df, colour = "green", lty = "dashed"
+  ) + # NOW FOR HOLM
+    # vertical line segment indicating size to achieve 0.8 power
+  geom_segment(aes(
+    x = poss.ns[min(which(pwr_mat_FDR[1, ] > 0.8))],
+    y = min(pwr_mat_FDR[1, ]),
+    xend = poss.ns[min(which(pwr_mat_FDR[1, ] > 0.8))],
+    yend = pwr_mat_FDR[1, min(which(pwr_mat_FDR[1, ] > 0.8))]
+  ),
+  data = gg_df, colour = "blue", lty = "dashed"
+  ) +
+  # horizontal line segment from min sample size plotted to the required sample size
+  geom_segment(aes(
+    x = min(poss.ns),
+    y = pwr_mat_FDR[1, min(which(pwr_mat_FDR[1, ] > 0.8))],
+    xend = poss.ns[min(which(pwr_mat_FDR[1, ] > 0.8))],
+    yend = pwr_mat_FDR[1, min(which(pwr_mat_FDR[1, ] > 0.8))]
+  ),
+  data = gg_df, colour = "blue", lty = "dashed"
+  ) + # NOW FOR BH FOR FDR CONTROL
+  # vertical line segment indicating size to achieve 0.8 power
+  geom_segment(aes(
+    x = poss.ns[min(which(pwr_mat_FDR[2, ] > 0.8))],
+    y = min(pwr_mat_FDR[2, ]),
+    xend = poss.ns[min(which(pwr_mat_FDR[2, ] > 0.8))],
+    yend = pwr_mat_FDR[2, min(which(pwr_mat_FDR[2, ] > 0.8))]
+  ),
+  data = gg_df, colour = "purple", lty = "dashed"
+  ) +
+  # horizontal line segment from min sample size plotted to the required sample size
+  geom_segment(aes(
+    x = min(poss.ns),
+    y = pwr_mat_FDR[2, min(which(pwr_mat_FDR[2, ] > 0.8))],
+    xend = poss.ns[min(which(pwr_mat_FDR[2, ] > 0.8))],
+    yend = pwr_mat_FDR[2, min(which(pwr_mat_FDR[2, ] > 0.8))]
+  ),
+  data = gg_df, colour = "purple", lty = "dashed"
+  ) +
+  scale_y_continuous(breaks = seq(0.2, 1, .2))
+
+gg_power
+```
+
+Using the power formula, we find that to achieve a power of 0.80 for detecting at least one significant treatment arm, we would need to have at least N = `r round(poss.ns[min(which(pwr_mat_Bonferroni[1,]>0.8))], 3)`. This is indicated by both the green line and the red line. Note that they lie on top of each other since Bonferroni correction and FDR control method returns the same power for detecting at least one significant effect.
+
+However, if we want to have enough power to reject both null hypotheses (declare that both treatment arms are effective), we would need a larger sample size. Here, we would need N = `r round(poss.ns[min(which(pwr_mat_Bonferroni[2,]>0.8))], 3)` when we use the most conservative Bonferroni correction. This is indicated by the green line. If we instead choose the FDR control, we would need a sample size of `r round(poss.ns[min(which(pwr_mat_FDR[2,]>0.8))], 3)`, indicated by the purple line.
+
+
+### Example 3: Simulation
+
+Above, we can use the power calculation formulas when we think the modeled outcome distributions are _close enough_ to our real data generating processes. But we might want to run power calculations in alternative scenarios, such as when we have clustering in responses. For example, maybe we are collecting multiple measures from the same individual, where each individual responds to several stimuli. Then it is harder to come up with a straightforward formula for power. 
+
+For such more complicated experiments, we can find our required experiment size by simulating many runs of the experiment, and calculating the portion of them in which we reject the null hypothesis. (Note that this code is adapted from  Egap's [Power Analysis Simulations in R](http://egap.org/content/power-analysis-simulations-r)). 
+
+The simulation below will show that under the same assumptions, the formulas and the simulations will give us the same results as in Example 2. When we need to alter our assumptions, it is easier to do this by simulation. 
+
+```{r sim_code}
+possible.ns <- seq(from = 100, to = 1500, by = 100) # sample size we want to consider
+power.atleastone <- rep(NA, length(possible.ns)) # power for rejecting at least one of the null hypotheses
+power.alltreatments <- rep(NA, length(possible.ns)) # power for rejecting both nulls, with Bonferroni control
+power.alltreatments_FDR <- rep(NA, length(possible.ns)) # power for rejecting both nulls, with FDR control
+hypothesis <- 'greater'
+
+alpha <- 0.05 # significance level
+sims <- 1e2 # number of simulations
+
+p_list <- c(1/3, 1/3, 1/3) # probability of assignment to each treatment arm
+
+# remember to define your mu_0 and mus
+
+# to save some simulated outcome to show the differences
+# you can delete this in your own code
+nrow <- 8
+ncol <- 5
+outcome_sims <- matrix(nrow=nrow, ncol=ncol)
+
+#### Outer loop to vary the number of subjects ####
+#### Outer loop to vary the number of subjects ####
+for (j in 1:length(possible.ns)) {
+  N <- possible.ns[j] # select the sample size
+  pvec <- cvec <- matrix(NA, sims, length(mus)) # to hold p-values and coefficients
+  fit.TvsC.sim <- matrix(NA, length(mus))
+  
+  #### Inner loop to conduct experiments "sims" times over for each N ####
+  for (i in 1:sims) {
+    taus <- matrix(NA, length(mus))
+    Y_potentials <- matrix(NA, N, length(mus)+1)
+    Y.sim <- matrix(NA, N, length(mus))
+    ### Here is where we are simulating the outcomes
+
+    Y_potentials[, 1] <- rnorm(n = N, mean = mu_0, sd = 1) # simulate potential outcomes under control
+    
+    for (k in 1:length(mus)){
+      taus[k] <- mus[k] - mu_0 # difference in means for kth treatment
+      Y_potentials[, k+1] <- Y_potentials[, 1] + taus[k] # outcomes under kth treatment
+    }
+
+    # Simulate treatment assignment
+    Z.sim <- complete_ra(N = N, num_arms = length(mus)+1, prob_each = p_list) #prob_each specifies probability of assignment to each arm
+    t_list <- c('T0')
+    for (t in 1:length(mus)){
+      t_list[[t+1]] <- paste0('T', t)
+    }
+    levels(Z.sim) <- t_list # add treatment names
+    # aggregate potential outcomes
+    Y.sim <- Y_potentials[cbind(1:N, as.numeric(Z.sim))] # simulated outcomes
+    
+    # save the outcomes to be shown later
+    if (i == 1 & j <= ncol){
+      outcome_sims[,j]=Y.sim[1:nrow]
+    }
+
+    frame.sim <- data.frame(Y.sim, Z.sim) # save outcomes and treatment assignment
+    for (k in 1:length(mus)){
+      fit.TvsC.sim <- lm(Y.sim ~ Z.sim == paste0("T",k), data = subset(frame.sim, Z.sim %in% c(paste0("T",k), "T0"))) # estimate treatment 1 effect
+      
+      # capture pvalues and coefficients
+      if (hypothesis == "two.tailed") {
+        pvec[i, k] <- summary(fit.TvsC.sim)$coefficients[2, 4]
+        cvec[i,k] <- TRUE
+      } else if (hypothesis == "greater") {
+        pvec[i, k] <- pt(coef(summary(fit.TvsC.sim))[2, 3], fit.TvsC.sim$df,
+                         lower = FALSE
+        )
+        cvec[i, k] <- summary(fit.TvsC.sim)$coefficients[2,1] > 0
+      } else if (hypothesis == "lower") {
+        pvec[i, k] <- pt(coef(summary(fit.TvsC.sim))[2, 3], fit.TvsC.sim$df,
+                         lower = TRUE
+        )
+        cvec[i, k] <- summary(fit.TvsC.sim)$coefficients[2,1] < 0
+      }
+    }
+    
+  }
+  # check power
+  power.atleastone[j] <- mean(sapply(1:sims, function(x)
+    max(cvec[x,]*(pvec[x,]<alpha/length(mus)))==1))
+  
+  power.alltreatments[j] <- mean(sapply(1:sims, function(x) 
+    all(cvec[x,]*(pvec[x,]<(alpha/length(mus)))) )) # Bonferroni
+  
+  power.alltreatments_FDR[j] <- mean(sapply(1:sims, function(x) 
+    all(cvec[x,]*(pvec[x,]<alpha)) )) # FDR
+}
+
+# saving the data and naming them
+gg_df2 <- data.frame(
+  N = possible.ns, `simulated: At least one` = power.atleastone,
+  `Simulated: All, with Bonferrroni` = power.alltreatments,
+  `Simulated: All, with FDR` = power.alltreatments_FDR
+)
+
+# plotting the graph
+gg_df2 <- gg_df2 %>% melt(
+  id.vars = "N", value.name = "Power",
+  variable.name = "Type"
+)
+
+gg_power +
+  geom_point(data = gg_df2, aes(x = N, y = Power, group = Type, col = Type))
+
+```
+
+For illustration purpose, below you can see some of the simulated outcomes for the different sample sizes. 
+The simulation example above allows us to analyze these simulated outcomes to calculate for power instead of relying on the analytical power formula.
+
+```{r sim_outcome}
+
+colnames(outcome_sims) <- paste0('N=', possible.ns[1:ncol]) # add the titles
+outcome_sims # output the simulated outcomes
+
+```
+
+
+### Optimal Treatment-Control Split
+
+The proportion of observations to be allocated to each condition depends on your goal. Suppose that you are most interested in testing each of the intervention against the control condition, it is then optimal to increase number of participants allocated to the control.
+
+If you are more interested in testing a smaller effect of one treatment than the others, you might want to increase the number of individuals in that treatment in order to have sufficient power to detect a smaller effect.
+
+Moreover, as mentioned above, your goal also affects the correction method you use for conducting multiple hypotheses testing.
+
+Now let us see how treatment-control split affects the power for detecting at least one significant result.
+
+```{r sim_code_split}
+
+possible.ns <- seq(from = 100, to = 1500, by = 50) # sample size we want to consider
+hypothesis <- 'greater'
+
+alpha <- 0.05 # significance level
+sims <- 1e2 # number of simulations
+
+# probability of assignment to each treatment arm
+p_list <- list(c(1/3, 1/3, 1/3),
+               c(1/5, 2/5, 2/5),
+               c(1/2, 1/4, 1/4)
+               ) 
+
+power.atleastone <- matrix(NA, length(p_list), length(possible.ns)) # power for rejecting at least one of the null hypotheses
+
+# remember to define your mu_0 and mus
+
+#### Outer loop to vary the treatment-control split ####
+for (l in 1:length(p_list)){
+  #### Second outer loop to vary the number of subjects ####  
+  for (j in 1:length(possible.ns)) {
+    N <- possible.ns[j] # select the sample size
+    pvec <- cvec <- matrix(NA, sims, length(mus)) # to hold p-values and coefficients
+    fit.TvsC.sim <- matrix(NA, length(mus))
+    
+    #### Inner loop to conduct experiments "sims" times over for each N ####
+    for (i in 1:sims) {
+      taus <- matrix(NA, length(mus))
+      Y_potentials <- matrix(NA, N, length(mus)+1)
+      Y.sim <- matrix(NA, N, length(mus))
+      ### Here is where we are simulating the outcomes
+  
+      Y_potentials[, 1] <- rnorm(n = N, mean = mu_0, sd = 1) # simulate potential outcomes under control
+      
+      for (k in 1:length(mus)){
+        taus[k] <- mus[k] - mu_0 # difference in means for kth treatment
+        Y_potentials[, k+1] <- Y_potentials[, 1] + taus[k] # outcomes under kth treatment
+      }
+  
+  
+      # Simulate treatment assignment
+      Z.sim <- complete_ra(N = N, num_arms = length(mus)+1, prob_each = p_list[[l]]) #prob_each specifies probability of assignment to each arm
+      t_list <- c('T0')
+      for (t in 1:length(mus)){
+        t_list[[t+1]] <- paste0('T', t)
+      }
+      levels(Z.sim) <- t_list # add treatment names
+      # aggregate potential outcomes
+      Y.sim <- Y_potentials[cbind(1:N, as.numeric(Z.sim))] # simulated outcomes
+  
+      frame.sim <- data.frame(Y.sim, Z.sim) # save outcomes and treatment assignment
+      for (k in 1:length(mus)){
+        fit.TvsC.sim <- lm(Y.sim ~ Z.sim == paste0("T",k), data = subset(frame.sim, Z.sim %in% c(paste0("T",k), "T0"))) # estimate treatment 1 effect
+        
+        # capture pvalues and coefficients
+        if (hypothesis == "two.tailed") {
+          pvec[i, k] <- summary(fit.TvsC.sim)$coefficients[2, 4]
+          cvec[i, k] <- TRUE
+        } else if (hypothesis == "greater") {
+          pvec[i, k] <- pt(coef(summary(fit.TvsC.sim))[2, 3], fit.TvsC.sim$df,
+                           lower = FALSE
+          )
+          cvec[i, k] <- summary(fit.TvsC.sim)$coefficients[2,1] > 0
+        } else if (hypothesis == "lower") {
+          pvec[i, k] <- pt(coef(summary(fit.TvsC.sim))[2, 3], fit.TvsC.sim$df,
+                           lower = TRUE
+          )
+          cvec[i, k] <- summary(fit.TvsC.sim)$coefficients[2,1] < 0
+        }
+      }
+    }
+    # check power
+    power.atleastone[l, j] <- mean(sapply(1:sims, function(x)
+      max(cvec[x,]*(pvec[x,]<alpha/length(mus)))==1))
+  }
+}
+
+# saving the data and naming them
+gg_df2 <- data.frame(
+  N = possible.ns, `Equal split` = power.atleastone[1, ],
+  `More to treat` = power.atleastone[2, ],
+  `More to control` = power.atleastone[3, ]
+)
+
+# plotting the graph
+gg_df2 <- gg_df2 %>% melt(
+  id.vars = "N", value.name = "Power",
+  variable.name = "Type"
+)
+
+gg_power_split <- ggplot(gg_df2, aes(x = N, y = Power, group = Type, col = Type)) + geom_point()
+gg_power_split
+
+```
+
+As shown in the plot, assigning more observations to the control increases power as we are interested in comparing each treatment arm against the control.
+
+### A Note on Pre-test/Post-test Design
+
+As mentioned before, using a pre-test/post-test design can increase power of our model. However, that relies on us having fairly strong beliefs about effects of pre-treatment results to be able to do so. 
+
+### Comprehension check 1
+> Suppose you are in charge an online campaign that aims to incentivize people to donate to  charities. Your company has been using one type of advertisement (control). Your manager asks you to evaluate two alternative advertisements (treatment 1 and 2). In a small pilot, you have collected data from just 90 observations with 30 observations in each treatment. The average amount of donation was $\mu_0 = \$8$ under the control message, $\mu_1 = \$10$ under Treatment 1, and $\mu_2 = \$9$ under Treatment 2. Moreover, the standard deviation in donation amount is $\sigma = \$5$.  First, your manager asks you, does either alternative advertisement change the donation amount? What analysis would you conduct to answer this?
+
+```{r power_comp_1}
+
+# [YOUR CODE HERE]
+
+```
+
+### Comprehension check 2
+> Your manage now asks you, how confident are you about the results above? What calculations would you make to answer this question? 
+
+```{r power_comp_2}
+
+
+# [YOUR CODE HERE]
+
+```
+
+
+### Comprehension check 3
+> Lastly, you decide to plan a new experiment to further analyze the two alternative advertisements. How large would you plan your experiment to be now? How would you divide the sample? What correction method would you choose?
+
+```{r power_comp_3}
+
+# [YOUR CODE HERE - modify from the power_example code chunk above. This is also what you will want to do in your own planning.]
+
+```
+
+
+
+
+## References
+
+- Alexander Coppock developed shiny apps, [Power Calculator](https://alexandercoppock.com/statistical_powercalculator.html) and [Multiple Comparisons Calculator](https://alexandercoppock.com/statistical_comparisons.html), and authored an excellent guide to Multiple Comparisons, found among the EGAP Methods Guides, [10 Things You Need to Know About Multiple Comparisons](https://egap.org/methods-guides/10-things-you-need-know-about-multiple-comparisons)

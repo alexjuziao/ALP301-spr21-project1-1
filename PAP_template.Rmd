@@ -1,0 +1,371 @@
+---
+title: "PAP Template for Experiment Projects"
+author: "YOUR NAME"
+date: "April 2021"
+output: 
+  html_document:
+    highlight: haddock
+    theme: journal
+    number_sections: no
+    toc: yes
+    toc_depth: 5
+    toc_float: yes
+---
+
+<style>
+div.blue { background-color:#e6f0ff; border-radius: 5px; padding: 20px;}
+</style>
+
+<style>
+div.medblue { background-color: #b3d1ff; border-radius: 5px; padding: 5px;}
+</style>
+
+<style>
+div.darkblue { background-color: #9ac2ff; border-radius: 5px; padding: 5px;}
+</style>
+
+## Instructions: 
+This is a template of an experimental plan document, or what is called a Pre-analysis Plan (PAP). In this course, your team will work together on producing a PAP to plan your experiment. It will be one of your final deliverables.[^1]
+
+The PAP is a planning tool to help your team 1) structure the research from design to analysis, 2) think through all the necessary steps before implementation, 3) lay out specific hypotheses you want to test, and 4) plan for analysis before the data comes in. This plan lowers the risk of ex-post cherry-picking of causal relations through precisely defining the hypotheses, outcomes, and tests prior to data collection and/or analysis.
+
+This template is produced to help you frame the planning of your experiment. We have filled in the template based on the Pre-analysis Plan for "Optimal Policies to Battle the Coronavirus Infodemic Among Social Media Users in Sub-Saharan Africa" (Offer-Westort, Rosenzweig, and Athey, 2020). Note that we have adapted and simplified some sections.
+
+You should be able to complete a PAP for your experiment using resources such as the Project Packet, discussions with partners and experts, and the experimental design tutorials.
+
+[^1]: This tutorial was originally developed for the Spring 2021 course, ALP301 Data-Driven Impact.
+
+
+```{r setup, include = FALSE}
+set.seed(95126)
+knitr::opts_chunk$set(
+  eval = TRUE,
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE
+)
+```
+
+
+---
+
+## Motivation
+
+_Please explain the motivation for your project, its objectives, and potential implications of the study._
+
+**Source: This can come from the project description, project packet, your discussion with the partners, or outside the class.**
+
+Example:
+
+Alongside the outbreak of the novel coronavirus (SARS-CoV-2), much of the world’s
+population is also experiencing an “infodemic” – the spread of misinformation related
+to the virus. COVID-19 misinformation spreading on social media platforms covers a
+range of topics.
+
+...
+
+This project evaluates the effect of interventions designed to decrease sharing of false
+COVID-19 cures. Using Facebook advertisements to recruit social media users in Kenya
+and Nigeria, we deliver our interventions with a Facebook Messenger chatbot, allowing
+us to observe treatment effects in a realistic setting. We test the effectiveness of several interventions used by academics and social media platforms to stop the spread of online misinformation targeted at both the respondent level, such as tips for spotting fake news, a video training and nudges, as well as headline-level treatments, such as “false” tags and related articles. Our outcomes of interest focus on sharing intentions and behavior, rather than beliefs or attitudes. Individuals do not need to have a strong belief that a COVID-19 remedy works to try it themselves or share it with their friends.
+
+...
+
+We believe that the insights gleaned from this experiment will both contribute to generalized knowledge about how to combat the spread of online misinformation and lay a path forward for further exploration of mechanisms. Specifically, ...
+
+
+---
+
+## Research Questions
+
+_Present research questions that provide insights into the problem described in the motivation. Argue how answering these questions helps understand the problem and inform policies to address it._
+
+**Source: This can come from the project description, project packet, your discussion with the partners, or outside the class.**
+
+Example: 
+
+What interventions are the most effective in reducing the intention to share online misinformation related to COVID-19 prevention and cure?
+
+Do some interventions work better for some subgroups of people?
+
+---
+
+## Experimental Setup
+
+_Describe how the research question can be answered with an experiment, comment on the methodology used. For example, argue why a randomized experiment is useful to answer the research question._
+
+_This section should be a "how-to" guide for executing your experiment. In theory, someone should be able to execute your experiment after reading this section._
+
+
+### Sample recruitment
+
+_How, where and when will your participants be recruited? Who are your participants? Why is this an appropriate sample for studying the research problems above? How are the data going to be collected?_
+
+**Source: Please consult the project packet, the partners, or the teaching team to understand the opportunities and constraints.**
+
+Example:
+
+We will recruit respondents in Kenya and Nigeria using Facebook advertisements targeted
+to users 18 years and older living in these countries. To achieve balance on gender within
+our sample, we create separate ads targeting men and women in both countries. Our target sample size is 1,500 respondents in each country for our pilot. We anticipate that our sample will look similar to the overall Facebook population in these countries, which tends to be more male, more urban, and more educated than the overall population (Rosenzweig et al., 2020). We will analyze how our sample compares to both the Facebook population and the general population in Kenya and Nigeria using Facebook’s advertising API data and nationally representative Afrobarometer surveys conducted in both countries.
+
+When users click on the “Send Message” button on our advertisement, a Messenger conversation will open with our Facebook page, starting a conversation with a chatbot programmed to implement the survey. In contrast to sending users to an external survey platform such as Qualtrics, the benefit of the chatbot is that we keep users on the Facebook platform, with which they are likely more familiar, and maintain a realistic setting in which users might encounter online misinformation.
+
+
+### Treatment
+
+_Please explain your experimental interventions in detail here. Please include a flow chart/diagram that helps explain to readers your experimental setup and procedure._
+
+_You should provide details for each treatment arm here. Remember, visuals help! You can provide images or screenshots of what the actual experiment will look like to participants._
+
+_You should also provide the rationale for choosing the treatment arms._
+
+
+**Source: You can draw inspirations from your team discussions, discussion with the partner, as well as previous treatment interventions used in the literature.**
+
+Example:
+
+Drawing on the literature on experimental interventions to combat misinformation, we
+include several treatments designed to reduce the spread of misinformation online, which
+are targeted both at the respondent level and the headline level. This list of treatments
+also draws on real-world interventions that companies and platforms have instituted to
+combat misinformation. The treatments are presented in Table 1.
+
+Respondent-level treatments and headline-level treatments are implemented as separate
+factors, each of which has an empty baseline level that is the control. So respondents may be
+assigned the pure control condition, one of the respondent-level treatments but no headline level treatment, one of the headline-level treatments but no respondent-level treatment, or
+one of the respondent-level treatments and one of the headline-level treatments.
+
+<center>
+**Table 1**
+</center>
+
+| Shorthand Name | Treatment Level | Treatment 
+|:----:|:----:|:----:|
+| 1. Facebook tips | Respondent |Facebook’s “Tips to Spot False News”|
+| 2. AfricaCheck tips | Respondent | Africacheck.org’s guide:
+“How to vet information during a pandemic”|
+| 3. Video training | Respondent | Videos (links) | 
+| 4. Emotion suppression | Respondent | Prompt: “As you view and read the headlines, if you have any feelings, please try your best not to let those feelings show. Read all of the headlines carefully, but try to behave so that someone watching you would not know that you are feeling anything at all” (Gross, 1998). | 
+| 5. Pledge | Respondent | Prompt: Respondents will be asked if they want to keep their family and friends safe from COVID-19, if they knew COVID-19 misinformation can be dangerous, and if they’re willing to take either a private or public pledge to help identify and call out COVID-19 misinformation online (see B.4.4). | 
+| 6. Accuracy nudge |  Respondent |  Placebo headline: “To the best of your knowledge, is this headline accurate?” (Pennycook et al., 2020, 2019). | 
+| 7. Deliberation nudge|  Respondent | Placebo headline: “In a few words, please say why you would ike to share or why you would not like to share this headline.” [open text response] | 
+| 8. Related articles | Headline | Facebook-style related stories: below story,
+show one other story which corrects a false news story | 
+| 9. Factcheck  | Headline  | Fact checking flag from third party PesaCheck or AfricaCheck | 
+| 10. More information |  Headline  | Provides a link to “Get the facts about COVID-19” | 
+| 11. Real information  | Headline |  Provides a true statement: “According to the WHO,
+there is currently no proven cure for COVID-19. | 
+| 12. Control  | N/A  | Control condition | 
+
+<center>Table 1. Description of interventions included in the experiment</center>
+
+Treatments 1, 2, 3, 8, 9 and 10 are derived from interventions currently being used by
+social media platforms including Facebook, Twitter, and WhatsApp. For instance, Guess
+et al. (2020) find that reading Facebook’s tips for spotting untrustworthy news improved
+participants’ ability to discern false from true headlines in the US and India.
+
+
+
+
+
+### Outcomes
+
+_How will you measure and analyze both primary and secondary outcomes of interest? How do they help you address the research questions?_
+
+**Source: You can discuss with the partners to understand whether the outcomes are meaningful for them. **
+
+Example:
+
+We are primarily interested in decreasing sharing of harmful false information about
+COVID-19 cures and treatments. However, we would simultaneously wish to constrain
+negative impacts on sharing of useful information about transmission and best practices
+from verified sources. Specifically, we are interested in three outcomes: 
+
+Primary:
+
+(1) Self-reported intention to share a given story, 
+
+Secondary:
+
+(2) Actual behavior with respect to sharing that story, 
+
+(3) Willingness to share tips and information about misinformation more generally. 
+
+
+
+#### Primary Outcomes
+
+_ Describe the primary outcome. Argue why this is a relevant metric for answering the research questions. If the design of your experiment is more involved or has multiple outcomes of interest, feel free to add additional sections as necessary._
+
+Example: 
+
+_You should lay out the questions you use to measure your outcomes._
+
+We measure interest in sharing information through two questions:
+
+* Would you like to share this post on your timeline?
+* Would you like to send this post to a friend on Messenger?
+
+We use a pre-test / post-test design. Prior to treatment, we show respondents four media posts from their country (two true and two false in random order) randomly sourced from our stimuli set. For each stimulus, we ask the above self-reported sharing intention questions. Respondents are then asked a series of questions about their media consumption, and are then randomly assigned treatment according to the experimental design. If assigned to one of the respondent level treatments, they are administered the relevant treatment. 
+
+They are then shown four additional stimuli (two true and two false), selected from the remaining stimuli that they were not shown pre-treatment. If the respondent is assigned a headline-level treatment, this treatment is applied only to the misinformation stimuli, as flags and fact-checking labels are not generally applied to true information from verified sources. For each of the stimuli
+we again ask the same self-reported sharing intention questions.
+
+Because of random assignment, we expect to see no systematic differences in pre-test interest in sharing either true or untrue stimuli across treatment conditions, conditional on covariates.
+
+#### Secondary Outcomes
+
+_Secondary outcomes are things that you also wish to investigate in addition to the primary outcomes. Sometimes these outcomes can shed light on the mechanisms through which interventions work. Sometimes they help ensure that your intervention does not lead to unintended effects._
+
+Example: 
+
+Additionally, we measure secondary behavioral outcomes which allows us to further
+investigate the extent to which treatments may suppress the sharing of true information.
+
+
+
+### Covariates
+
+_Which covariates will you include in the experiment and why? This selection can for example depend on expected treatment heterogeneity. Some common covariates include age, partisanship, Internet usage, location, etc. Explain why the covariates are important in your context._
+
+**Source: You can check what are the most commonly used covariates in other experiments in the literature. Moreover, it would be helpful to think about what the main covariates are to collect in your experimental context.**
+
+Example:
+
+The existing misinformation literature centered around studies conducted with respondents in North America and Europe, most often focuses on political ideology (Pennycook et al., 2019), cognition or inclination to deliberate (Bago et al., 2020), and media literacy (Guess et al., 2020). Our study expands this focus to explore heterogeneity with respect to additional respondent covariates. Outside of contexts where partisanship is a salient identity and lens through which individuals interpret news and information, what are the likely sources of heterogeneity in individuals’ receptivity to interventions to combat the spread of misinformation?
+
+In addition to the demographic covariates such as age, gender, education, we also
+include specific questions regarding knowledge of and concern about COVID-19, an index
+of scientific views, beliefs about government efficacy in the current coronavirus pandemic,
+religious behaviors and beliefs, locus of control, and digital literacy. These variables capture what might be sources of heterogeneity in responses
+to misinformation: age, analytical thinking (captured in our scientific beliefs index), and
+need for closure (captured in our concern regarding COVID-19 concern measurement and
+the beliefs about government efficacy measurement) (Wittenberg and Berinsky, 2020).
+
+
+---
+
+## Hypotheses
+
+_Discuss how you would map the research questions into testable hypotheses. For example, if your goal is to find some prototypes for further exploration, which kind of test would you want to conduct? If your goal is to figure out if an intervention works better for one specific group, how would you formulate the hypothesis?_
+
+_Be clear about the measurement and the direction of hypothesized change._
+
+_How do you plan to address the problem of multiple hypotheses testing? If you are making a final recommendation rather than selecting some for future exploration, you might want to choose the more conservative correction methods._
+
+**Source: The hypotheses should address your research/business goals.**
+
+Example:
+
+**Primary:**
+
+The primary hypotheses that we want to measure would be whether any of the combinations of treatments was effective in reducing sharing of COVID-19 misinformation.
+
+**Secondary (Hypotheses to inform industry practice)**
+
+We care about the outcome (reducing the spread
+of COVID-19 misinformation) and understanding which types of people are nudged toward
+this outcome by particular treatments. Therefore, we plan to examine how a few select
+treatments interact with particular covariates of interest. 
+
+We select the below treatments because these are currently, or were previously, used by social media companies including Facebook and Twitter. The below covariates were selected as those that social media companies directly collect or have access to, and therefore could more easily use for targeting interventions. For our covariates of interest, we will divide these into two groups for any binary variables (i.e. indicator for male) and split on the median value for continuous variables to test two subgroups (i.e. age $\geq$ median and age $<$ median)
+
+Treatments:
+
+* Facebook tips (respondent)
+* AfricaCheck tips (respondent)
+* Factcheck (headline)
+* More information (headline)
+* Related articles (headline)
+
+Covariates:
+
+* Age
+* Male
+* Education
+
+We hypothesize that the three headline-level treatments listed above will perform better
+among more educated users, older people, and among women, compared to the less educated,
+younger and male respondents. We expect that the two respondent-level treatments
+will reduce sharing of misinformation more among less-educated respondents than those
+with more education.
+
+
+---
+
+## Analysis
+
+_Label and index your data: outcomes, treatments, covariates. Formally describe how you test the hypotheses described earlier._
+
+**Source: Analysis should also follow your hypotheses. For each of your hypotheses, what analysis will allow you to test the hypotheses?**
+
+Example:
+
+For the primary and secondary outcomes discussed above, we report average outcomes under each headline factor level and separately each respondent factor level, marginalizing over a balanced distribution of levels of the other factor. In other words, we analyze the average marginal effects.
+
+To test hypotheses regarding specific heterogeneous response,
+we again average across the relevant outcomes, and compare estimates across the two groups defined by the covariates above.
+
+Given that testing these treatment-covariate combinations will result in a large number of
+unique tests, we will adjust for multiple hypothesis testing for response heterogeneity by
+reporting tests under different correction methods.
+
+_Reminder: the correction method also depends on your business objective._
+
+---
+
+## Power Calculations
+_A crucial function of the PAP is to help you calculate the sample size you would need to detect a hypothesized treatment effect. Depending on your experimental design, please use the relevant tutorial for power calculation code._
+
+_[Here](https://www.povertyactionlab.org/resource/conduct-power-calculations) is a resource containing principles for running power calculations._
+
+_Please indicate your choice of the minimum detectable effect and rationale. There is no universal rule of thumb for determining a "good" minimum detectable effect. For researchers, this might be informed by the existing literature: what have previous studies of comparable interventions found? What would be the smallest effect size that would be interesting to be able to reject? For partners, this might be the smallest effect that would still make it worthwhile to run this program (from their own perspective, or from a funder’s or policymaker’s perspective), as opposed to dedicating resources elsewhere. This may mean the smallest effect that meets their cost-benefit assessment, the smallest effect that is clinically relevant, or some other benchmark._
+
+_Please include the code, result, and figures from your power calculations._
+
+**Source: If your experiment involves multiple treatment arms, and you are comparing each of them against the control, you can adapt the power calculation code in the Multiple hypothesis testing tutorial. If you are using a factorial design experiment, you need to adapt the code in Factorial Design Tutorial, following the hypotheses that you outlined in the above section and the correction method that suits your objective.**
+
+
+### Load required packages
+
+```{r load_packages}
+# you can install the packages you need for power calculation and analysis
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(tidyverse)
+pacman::p_load(randomizr)
+pacman::p_load(estimatr)
+pacman::p_load(kableExtra)
+pacman::p_load(ggthemes)
+pacman::p_load(reshape2)
+pacman::p_load(bindata)
+```
+
+
+```{r power}
+
+# Add your code for power calculation here
+
+# If you are using a factorial design,
+# remember to use both the lm_interacted() function in 'lm_model' code chunk and the 'power_simulated' code chunk.
+
+# Please adjust the number of hypotheses, hypotheses type, effect size, and treatment-control split etc. in your simulation.
+
+```
+
+---
+
+## Analysis Scripts
+_Importantly, please include analysis scripts that can be directly applied to your experimental data. The data engineers should work to extract and organize experimental data so that the data scripts can be applied. Remember to always comment the code and add explanation after the code output._
+
+**Source: The experimental design tutorials contain code for analyzing a dataset, including coding up the outcome variables, treatment variables, covariates, checking balance in treatment assignment and analyzing using regression models. **
+
+```{r analysis}
+
+# Add your code for analysis
+
+
+```
+
+
+## References
