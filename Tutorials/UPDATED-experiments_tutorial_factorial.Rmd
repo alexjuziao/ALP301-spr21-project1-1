@@ -1,0 +1,860 @@
+---
+title: 'ALP301: Factorial Design Tutorial'
+author: "YOUR NAME"
+date: "April 2021"
+output: 
+  html_document:
+    highlight: haddock
+    theme: journal
+    number_sections: no
+    toc: yes
+    toc_depth: 5
+    toc_float: yes
+---
+
+<style>
+div.blue { background-color:#e6f0ff; border-radius: 5px; padding: 20px;}
+</style>
+
+<style>
+div.medblue { background-color: #b3d1ff; border-radius: 5px; padding: 5px;}
+</style>
+
+<style>
+div.darkblue { background-color: #9ac2ff; border-radius: 5px; padding: 5px;}
+</style>
+
+## Learning Objective
+In this tutorial, you will learn about factorial experimental design and the analysis of such an experiment. [^1]
+
+[^1]: This tutorial was originally developed for the Spring 2021 course, ALP301 Data-Driven Impact.
+
+
+```{r setup, include = FALSE}
+set.seed(95126)
+knitr::opts_chunk$set(
+  eval = TRUE,
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE
+)
+```
+
+```{r y_potential, echo=FALSE}
+# potential outcomes based on hypothesized effects
+y_potential <- function(b0, b_main_list, b_2wy_list, b_3wy_list, L_list){
+  
+  y_potential <- array(b0, 
+                       dim = L_list,
+                       dimnames = lapply(1:length(L_list), function(x) paste0('w', x, '.', 0:(L_list[[x]]-1)) ))
+  
+  # The dimension of the matrix is a function of inputs, so get that here
+  dimy <- as.matrix(do.call(expand.grid,lapply(dim(y_potential),seq)))
+  dim2y <- dimy[apply(dimy-1, 1, function(x) sum(x>0)>1), , drop = FALSE]
+  
+  for(i in 1:nrow(dimy)){
+    zz = dimy[i, , drop=FALSE]
+    xx = dimy[i, , drop=FALSE]-1
+    idx <- which(xx>0)
+    if(length(idx)>0){
+      for(l in 1:length(idx)){
+        widx <- paste0('w', idx[l], '.', xx[idx[l]])
+        y_potential[zz] <- y_potential[zz] + b_main_list[[widx]] # add in the main effects
+      }
+    }
+  }
+  
+  for(i in 1:nrow(dim2y)){
+    zz = dim2y[i, , drop=FALSE]
+    xx = dim2y[i, , drop=FALSE]-1
+    idx <- combn(which(xx>0), 2)
+    for(l in 1:ncol(idx)){
+      wwidx <- paste0('w', idx[1,l], '.', xx[idx[1,l]], 
+                      ':', 
+                      'w', idx[2,l], '.', xx[idx[2,l]])
+      y_potential[zz] <- y_potential[zz] + b_2wy_list[[wwidx]] # add in the 2 way interactions
+    }
+  }
+  
+  if(!is.null(b_3wy_list)){
+    dim3y <- dimy[apply(dimy-1, 1, function(x) sum(x>0)>2),]
+    for(i in 1:nrow(dim3y)){
+      zz = dim3y[i, , drop=FALSE]
+      xx = dim3y[i, , drop=FALSE]-1
+      idx <- combn(which(xx>0), 3)
+      for(l in 1:ncol(idx)){
+        wwwidx <- paste0('w', idx[1,l], '.', xx[idx[1,l]], 
+                         ':', 
+                         'w', idx[2,l], '.', xx[idx[2,l]],
+                         ':', 
+                         'w', idx[3,l], '.', xx[idx[3,l]])
+        y_potential[zz] <- y_potential[zz] + b_3wy_list[[wwwidx]] # add in the 3 way interactions
+      }
+    }
+  }
+  return(y_potential)
+}
+
+```
+
+
+---
+
+### Load required packages
+
+```{r load_packages}
+# Ensure that pacman is installed for package management and loading.
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(tidyverse)
+pacman::p_load(randomizr)
+pacman::p_load(estimatr)
+pacman::p_load(kableExtra)
+pacman::p_load(ggthemes)
+pacman::p_load(reshape2)
+pacman::p_load(bindata)
+```
+### Introduction
+
+In many contexts, you may wish to investigate multiple factors that simultaneously affect your outcome of interest. For example, you may hope to improve student learning outcomes in an education program, by proposing changes to the teaching methods. One factor, or component of teaching method could be the length of instruction. Suppose that currently, students just get 1 hour of instruction per week. You might want to investigate how outcomes change when instructions are increased to 3 hours per week. Another factor could be the context of instruction. Suppose currently all students receive instructions online. You may want to investigate the effect of having in-person instructions.
+
+Rather than conducting separate experiments, each to investigate one factor (also called one-factor-at-a-time experiments), factorial experiments study multiple factors simultaneously. In a full factorial design, we will run the experiments for every combination of the factor levels.
+
+In this tutorial, we will go through how you would analyze such an experiment, and how to conduct power calculation in order to design a new experiment.
+
+### Notation
+As explained above, a Factorial Experiment has two or more factors. As before, we can denote the number of factors as $K$. Each factor has two or more levels. We will denote the number of levels of factor $k$ as $L_k$, where $k \in \{1, \dots, K\}$. In the previous example, each of the factors (instruction time, and context) have two possible levels, i.e., $L_1 = 2$, $L_2 = 2$.
+
+A factorial design can then be denoted as a $L_1 * L_2 * \dots * L_K$ design. The total number of experimental conditions will be the product of $L_1 * L_2 * \dots * L_K$.
+
+Throughout this tutorial, we will mainly focus on a 2x2 (or $2^2$) factorial design, which has two factors, each with two levels. Each factor can have either a low level or a high level. This design produces 4 conditions:
+
+|| |  Factor 2 | Factor 2
+|:----: |:----: |:----: |:----:|:----:|:----:|:----:|
+||   | Low (0) | High (1) |
+**Factor 1**  | Low (0) | (0, 0) | (0, 1) |
+**Factor 1**  | High (1) | (1, 0) | (1, 1) |
+
+
+Let us now consider a hypothetical data set with $N$ observations. Each observation in our data set is indexed by $i$, and is represented by:
+
++ $W_{[k]} = w_{[k]}, w_{[k]} \in \{0, 1\}$ for $k \in \{1, 2\}$: a length two vector indicating which level of each factor an individual was assigned to, where 0 = low and 1 = high. 
++ $Y_i$: a real-valued variable indicating the observed outcome for that individual $i$
+
+Now we can denote the means of outcomes in each condition  as $\mu_{(W_1, W_2)}$.
+
+We can again make use of the potential outcomes framework of Rubin (1974), and define the following random variables:
+
++ $Y_i(0, 0)$: the outcome that individual $i$ would attain if they received low level treatment of Factor 1, and low level treatment of Factor 2
++ $Y_i(1, 0)$: the outcome that individual $i$ would attain if they received high level treatment of Factor 1, and low level treatment of Factor 2
++ $Y_i(0, 1)$: the outcome that individual $i$ would attain if they received low level treatment of Factor 1, and high level treatment of Factor 2
++ $Y_i(1, 1)$: the outcome that individual $i$ would attain if they received high level treatment of Factor 1, and high level treatment of Factor 2
+
+
+This results in a table of potential outcomes as produced below, where black values ($Y_i(w_{[1]}, w_{[2]})$) are the ones we observe, and grayed-out values (<font color="lightgray">$Y_i(w_{[1]}, w_{[2]})$</font>) are the ones we don’t observe.
+
+
+$i$ | $(W_{[1]i}, W_{[2]i})$ | $Y_{i}(0, 0)$ | $Y_{i}(1, 0)$ | $Y_i(0, 1)$ | $Y_{i}(1, 1)$ |
+|:----: |:----: |:----:|:----:|:----:|:----:|
+1 | (0, 1) |<font color="lightgray">$Y_{1}(0, 0)$</font> | <font color="lightgray">$Y_{1}(1, 0)$</font> |$Y_{1}(0, 1)$ | <font color="lightgray">$Y_{1}(1,1)$</font> |
+2 | (1, 1) |<font color="lightgray">$Y_{1}(0, 0)$</font> | <font color="lightgray">$Y_{1}(1, 0)$</font> |<font color="lightgray">$Y_{1}(0, 1)$</font> | $Y_{1}(1,1)$ |
+$\cdots$ | $\cdots$ | $\cdots$   | $\cdots$ |$\cdots$ |$\cdots$
+N | (0, 0) |$Y_{1}(0, 0)$ | <font color="lightgray">$Y_{1}(1, 0)$</font> |<font color="lightgray">$Y_{1}(0, 1)$</font> | <font color="lightgray">$Y_{1}(1,1)$</font> |
+
+
+
+Using the potential outcome notation above, the observed outcome can also be written as
+
+$$Y_{i}^{obs} = \sum_{w_{[1]}}\sum_{w_{[2]}} 1\{W_{[1]i} = w_{[1]}\}\times 1\{W_{[2]i} = w_{[2]}\} \times Y_{i}(w_{[1]}, w_{[2]})$$
+We denote $Y_{i}^{obs}$ as $Y_i$ from now on. 
+
+
+
+## Factorial Treatment Effects
+
+Different from single-factor experiments, we will consider estimands looking at each factor separately, and examining them jointly in a factorial design.
+
+Let us simulate some outcome data as a very simple toy example first. For the moment, we will ignore any noise in the outcome. 
+
+```{r toy}
+w1 <- rep(c(0, 1), times = 8) # treatment 1
+w2 <- rep(c(0, 1), times = c(4,12)) # treatment 2
+b0 <- 1 # control mean without any treatment
+b1 <- 0.5 # mean change under treatment 1
+b2 <- 0.75 # mean change under treatment 2
+
+y <- b0 + b1*w1 + b2*w2 # outcome based on treatment effects
+
+round(cbind(y, w1, w2),2) # round to 2 decimal places
+```
+
+
+### Looking at factors separately
+
+First, similar to what we do in single factor experiments, we may want to ask, what is the effect of the each factor?
+To get at this question, we will look at each factor separately, treating the other factors as exogenous.
+
+#### Average Marginal Effects
+
+This is what we call the Average Marginal effect (AME). We denote the *marginal* effect of factor $k$ as $\tau_{[k]}(1,0)$. The marginal effect of a two-level factor can be defined as the difference between the averages of potential outcomes when that factor is at its high level and when that factor is at its low level, averaged across the distribution of the other factor. 
+
+So, the effect of moving factor 1, $W_{[1]}$, from 0 to 1, averaging over the levels of $W_{[2]}$, can be written as:
+
+$$
+\tau_{[1]}(1,0)  = E_{W_{[2]}}\biggr[ \mu_{(1, W_{[2]})} - \mu_{(0, W_{[2]})} \biggr]
+$$
+
+
+With a balanced 2x2 design, such that an equal number of individuals is assigned to each condition, 
+$$
+\tau_{[1]}(1,0) = \frac{1}{2} [(\mu_{(1, 0)} + \mu_{(1, 1)}) - (\mu_{(0, 0)} + \mu_{(0, 1)})]
+$$
+
+
+<!--
+\begin{align*}
+\tau_{[1]}(1,0)  = &
+\textrm{E}_{W_{[2]}}\biggr[ \textrm{E}\left[Y(1, W_{[2]}) \big| W_{[2]} = w_{[2]}\right] - \textrm{E}\left[Y(0, W_{[2]}) \big| W_{[2]} = w_{[2]}\right]\biggr]\\
+=&   
+\sum_{w_{[2]}}\textrm{E}\left[Y(1, W_{[2]}  )\big| W_{[2]} = w_{[2]}\right] \times \textrm{Pr}[W_{[2]} = w_{[2]}] - \\
+& \sum_{w_{[2]}}\textrm{E}\left[Y(0, W_{[2]}) \big|W_{[2]} = w_{[2]}\right]\times \textrm{Pr}[W_{[2]} = w_{[2]}],
+\end{align*}
+
+
+-->
+
+The average marginal effect of factor 2 can be defined similarly. 
+
+To estimate the marginal effect, we can use a linear regression with an intercept, and an indicator for our variable of interest (factor 1 or factor 2). In doing so, we are treating the other factors as exogenous.
+
+Note that when we look at our first factor, `w1`, the linear regression estimate is equal to `b1` that we defined above.
+```{r toy2}
+lm_robust(y ~ w1)$coeff # linear regression with indicator for factor 1 level
+
+# Same result when calculating the difference in means
+mean(y[which(w1 == 1)])-mean(y[which(w1 == 0)])
+```
+And the same for our second factor, `w2`. 
+```{r toy3}
+lm_robust(y ~ w2)$coeff # linear regression with indicator for factor 2 level
+
+# Same result when calculating the difference in means
+mean(y[which(w2 == 1)])-mean(y[which(w2 == 0)])
+```
+Because our factors are perfectly uncorrelated by design, we can also estimate the marginal effects jointly. Note that if there is noise in the outcomes, we might get somewhat different estimates from above). 
+```{r toy4}
+cor(w1, w2)
+lm_robust(y ~w1 + w2)$coeff
+```
+In our randomized factorial design, we can ensure that potential outcomes are independent of treatment. But if treatments are correlated, the marginal effect does not have a causal interpretation. 
+
+To show this, below, we have allowed our treatments to be correlated. 
+```{r toycorr}
+m <- matrix(c(0.5, 0.4, 0.4, 0.75), nrow = 2) # treatments are correlated such that being those assigned to one treatment are also more likely to get the other treatment
+wmat <- rmvbin(16, commonprob=m) # create correlated binary random variables
+w1_c <- wmat[,1] # treatment 1
+w2_c <- wmat[,2] # treatment 2
+
+cor(w1_c, w2_c) # correlation between the factors
+
+y_c <- b0 + b1*w1_c + b2*w2_c # create the outcomes as before, without noise
+
+round(cbind(y_c, w1_c, w2_c),2)
+```
+Importantly, when the treatments are correlated, the joint model does not yield unbiased estimates of our *marignal* effects. Rather, it produces estimates of the effects discussed in the next section.  
+```{r toycorr2}
+lm_robust(y_c ~w1_c)$coeff
+lm_robust(y_c ~w2_c)$coeff
+lm_robust(y_c ~w1_c + w2_c)$coeff
+```
+
+### Looking at factors jointly
+
+So far, we have been looking at individual factors separately. Next, we will look at the factors jointly.
+
+#### Average Combination Effects
+
+The first and most intuitive type of effect when looking at the factors jointly is called the Average Combination effect. As the name implies, here we are asking, what is the effect of a particular factor combination?
+
+For example, we define $\tau_{[1,2]}(1,0;0,0)$ as the effect of going from both factors at their low 
+levels (0,0) to just moving factor 1 to its high level (1,0). That is,
+
+$$
+\tau_{[1,2]}(1,0;0,0) = \mu_{(1, 0)} - \mu_{(0, 0)}
+$$
+
+<!-- In other words,  -->
+<!-- $$ -->
+<!-- \tau_1 = \textrm{E}[ \frac{Y(1, 1) + Y(1, 0)}{2} - \frac{Y(0, 1) + Y(0, 0)}{2}]\\ -->
+<!-- \tau_2 = \textrm{E}[ \frac{Y(1, 1) + Y(0, 1)}{2} - \frac{Y(1, 0) + Y(0, 0)}{2}] -->
+<!-- $$ -->
+
+
+Defining a causal effect jointly is meaningful when there is an **interaction** between the two factors, that is, when the effect of one factor changes depending on the level of the other factor. For example, longer period of instruction may only be benefical for student learning in the in-person context, but not for online environment.
+
+If there is no interaction, then the effect of one factor does not change depending on the level of the other factor. Then, the below combination effects are equivalent, i.e., 
+$$
+\mu_{(1, 0)} - \mu_{(0, 0)} = \mu_{(1, 1)} - \mu_{(0, 1)}
+$$
+Note that this says that the effect of moving factor 1 from low to high level is the same regardless of whether factor 2 is low or high.
+
+Let us check this in our toy example:
+```{r toy_continued}
+# \mu(1,0)- \mu(0,0)
+mean(y[which(w1 == 1 & w2 == 0)])-mean(y[which(w1 == 0 & w2 == 0)])
+# \mu(1,1)- \mu(0,1)
+mean(y[which(w1 == 1 & w2 == 1)])-mean(y[which(w1 == 0 & w2 == 1)])
+```
+Can you see why there is no interaction here? Recall that in our toy example, the outcomes are generated from an additive model, and there was nothing that says the effect of a factor on the outcome would depend on the other factor.
+
+Moreover, also note the relationship between average combination effects and the average marginal effect. They are the same since we have not yet introduced an interaction.
+
+What if there is an interaction effect? How do we measure it?
+
+#### Average interaction effects
+
+Suppose instead, that our data generating process is as below:
+```{r toy_new}
+b3 <- -0.6    # this is the coefficient on the interaction effect
+y <- b0 + b1*w1 + b2*w2 + b3*w1*w2    # outcome generation
+```
+
+Now, the effect of one factor *does* change with the level of the other factor, and the equality between average combination effects below does not hold. 
+$$
+\mu_{(1, 0)} - \mu_{(0, 0)} \neq \mu_{(1, 1)} - \mu_{(0, 1)}
+$$
+We can check this again in our toy example:
+```{r toy_new2}
+# E[(Y(1,0)-Y(0,0))]
+mean(y[which(w1 == 1 & w2 == 0)])-mean(y[which(w1 == 0 & w2 == 0)])
+# E[(Y(1,1)-Y(0,1))]
+mean(y[which(w1 == 1 & w2 == 1)])-mean(y[which(w1 == 0 & w2 == 1)])
+```
+
+
+To deal with this interaction effect, we will define a new estimand, the two-way interaction effect between factor 1 and 2 as $\xi_{[1, 2]}$.
+$$
+\xi_{[1, 2]} = (\mu_{(1,1)} - \mu_{(0,0)}) - [(\mu_{(1,0)}-\mu_{(0,0)}) + (\mu_{(0,1)}-\mu_{(0,0)})] \\
+= (\mu_{(1,1)} - \mu_{(1,0)}) - (\mu_{(0,1)}-\mu_{(0,0)})
+$$
+
+
+<!--
+$$
+\xi_{[1, 2]} = \textrm{E}\big[((Y(1, 1) -Y(0, 0)) - \left[(Y(1, 0) - Y(0, 0)) + (Y(0, 1) - Y(0,0))\right]\big] \\
+= \textrm{E}\left[(Y(1, 1) - Y(1, 0))\right] - \textrm{E}\left[(Y(0, 1) - Y(0, 0))\right]
+$$
+-->
+
+Intuitively, $\xi_{[1, 2]}$ is the additional impact of having *both* factors at the high level, above the sum of the average combination effect of each factor at the high level separately. In other words, this is the additional impact of having longer instruction in-person, beyond the sum of effect of moving from short instruction online to long instruction online, and the effect of moving from short instruction online to short instruction in-person.
+<!-- TODO: I tried to rework this sentence, but I think it needs to be refined again. -->
+
+Average Combination effects and the Average Interaction effect work out nicely for a fully interacted linear model:
+
+$$
+Y = \alpha_0 + \beta_1 \times 1\{W_{[1]} = 1\}+ \beta_2 \times 1\{W_{[2]} = 1\} + \beta_{1,2} \times 1\{W_{[1]} = 1\} \times 1\{W_{[2]} = 1\} + \epsilon
+$$
+In this setting, the coefficients can be defined in terms of our estimands and potential outcomes:
+
++ $\alpha_0 = \mu_{(0,0)}$, the control mean
++ $\beta_1 = \tau_{[1,2]}(1,0;0,0) = \mu_{(1, 0)} - \mu_{(0, 0)}$, average combination effect of (1, 0)
++ $\beta_2 = \tau_{[1,2]}(0,1;0,0) = \mu_{(0, 1)} - \mu_{(0, 0)}$, average combination effect of (0, 1)
++ $\beta_{1,2} = \xi_{[1, 2]} = (\mu_{(1, 1)} - \mu_{(1, 0)}) - (\mu_{(0, 1)} - \mu_{(0, 0)})$, the average interaction effect.
+
+**NOTE**: In the previous section, we have seen that the average marginal effect of a factor is equal to the average combination effect, holding the other factor at the low level. Therefore, in the regression, if the average interaction term $\beta_{1,2}$ is zero, $\beta_1$ and $\beta_2$ will be equivalent to the relevant average marginal effects for each factor.
+
+Moreover, we can combine these terms to give us estimates of means under each condition.  
+
+```{r toy_new3}
+# the full regression model, can also be written as lm_robust(y ~ w1*w2) that automatically includes the individual indicators
+lm_robust(y ~ w1 + w2 + w1*w2)$coeff
+```
+
+```{r y_outcomes, echo=FALSE}
+b0 = 1 # same as alpha_0 in the above equation
+b_main_list <- list('w1.1' = b1,
+                    'w2.1' = b2) # \beta_1 and \beta_2 in the equation
+b_2wy_list <- list('w1.1:w2.1' = b3) # \beta_3 in the equation
+b_3wy_list <- NULL # higher-order, 3 way interaction effects, NULL here since we only have two factors
+
+y_potential(b0, b_main_list, b_2wy_list, b_3wy_list, list(2,2))
+```
+
+
+In a more complicated experiment with more than two factors, there can be multiple two-way interaction effects between each pair of treatment levels, three-way interactions between triads of factors, and so on.
+
+\begin{align*}
+Y =  \alpha_0 & + \sum_k \sum_{w_{[k]}} \beta_k \times 1\{W_{[k]} = w_{[k]}\} \\
+&   + \sum_k \sum_{w_{[k]}} \sum_{\ell > k}\sum_{w_{[\ell]}} \beta_{k,\ell} \times 1\{W_{[k]} = w_{[k]}\}\times 1\{W_{[\ell]} = w_{[\ell]}\} \\
+& + \sum_k \sum_{w_{[k]}} \sum_{\ell > k}\sum_{w_{[\ell]}} \sum_{m > \ell}\sum_{w_{[m]}} \beta_{k,\ell, m} \times 1\{W_{[k]} = w_{[k]}\}\times 1\{W_{[\ell]} = w_{[\ell]}\}\times 1\{W_{[m]} = w_{[m]}\} \\
+& + \dots + \epsilon
+\end{align*}
+
+Note that the number of coeffcients increases with the number of factors you have. This can lead to high Type I errors and overfitting. Moreover, it can be difficult to interpret the complicated higher order interaction effects.
+Regularization is one approach to avoid overfitting, by factor selection and level collapsing, but we will not cover that in this tutorial.
+
+Now let us see how we can conduct hypothesis testing for a factorial design.
+
+## Hypothesis testing
+
+If your goal is to investigate the effects of individual factors, you would need to first check if interaction is negligible. As mentioned above, using the regression model, if interactions are all zero, the $\beta_k$ coefficients can then give consistent estimates for the Average Marginal effects of factor $k$.
+
+If the interactions are not zero, then we know that the effect of a factor depends on the levels of the other factors. In this case, it is not meaningful to talk about the "effect of factor $k$" without talking about the other factors. In other words, you can focus on the Average Combination effects if there are significant interaction effects.
+
+If your goal is to investigate the interaction effect, again, you would need to first conduct hypothesis testing for the interaction effect. Overall, it is always a good idea to first test the interaction effect.
+
+
+Now let us use a larger dataset, and add some noise to the outcomes. 
+```{r noise}
+# probability of treatment assignment, separate entry for each factor
+p_list <- list(c(0.5, 0.5),
+               c(0.5, 0.5)) # balanced design
+N <- 200
+sigma <- 2
+
+# We'll use `complete_ra` for complete random assignment, but we'll keep our 
+# ws as binary dummy variables
+# treatment 1
+w1 <- as.numeric(complete_ra(N, num_arms = 2, prob_each = p_list[[1]])=='T1') 
+# treatment 2
+w2 <- as.numeric(complete_ra(N, num_arms = 2, prob_each = p_list[[2]])=='T2') 
+
+# outcomes with noise
+y <- b0 + b1*w1 + b2*w2 + rnorm(N, sd = sigma) # as before, b0=1, b1=0.5, b2=0.75
+
+```
+
+### Looking at factors jointly
+
+As mentioned, we first test the interaction effect. We can write out our hypotheses as follows:
+
+For the average interaction effect, we choose a two-sided hypothesis, because we think interaction effects could be positive *or* negative:
+$$
+H^3_0: \beta_{1,2} = 0 \\
+H^3_A: \beta_{1,2} \neq 0
+$$
+For the average combination effects compared to a baseline of using low levels, we can define a hypothesis for each factor, giving rise to two hypotheses in total:
+$$
+H^k_0: \beta_k = 0 \\
+H^k_A: \beta_k > 0 \\
+\textrm{For each } k = 1, 2
+$$
+
+**Reminder**: If interaction is zero, $\beta_k$ will then be equal the average marginal effects.
+
+In total, we have 3 hypotheses, one for each $\beta$ coefficient. We again fit a linear model, and test our *one-sided* hypotheses for the marginal effects, and our *two-sided* hypothesis for the interaction. We can also check that using difference in means calculations produces the same estimates. 
+
+If your factors have more than 2 levels, you can define a hypothesis for each level of each factor.
+
+**Reminder**: Recall from the Multiarm Treatment Tutorial that since we are making multiple comparisons at the same time, we would need to compensate for this multiple hypothesis testing, for example by using a Bonferroni correction. 
+
+```{r interact_model}
+(lm3 <- lm_robust(y ~ w1*w2)) # regression with interaction term
+hyp3 <- c(pt(lm3$statistic, lm3$df, lower = FALSE)[2:3],
+          lm_robust(y ~ w1*w2)$p.value[4]) # get the p-values for each coefficient
+# Reminder: `lm_robust` produces a p-value and confidence intervals for a *two-sided* hypothesis
+# Since we are testing a *one-sided* hypothesis here, we need to plug the relevant values in the distribution function for the student t-distribution.
+
+hyp3
+```
+Our p-values for the one-sided hypothesis are `r round(hyp3, 3)`. Let us use significance level of $\alpha=0.05$. If we conduct Bonferroni correction, we fail to reject for all three hypotheses with a sample of this size. In fact, we cannot reject any of the null with FDR control either.
+
+```{r interact_model_bf}
+alpha=0.05
+n=3
+hyp3<(alpha/n) # Bonferroni
+
+cutoffs <- (1:n)/(n)*alpha
+hyp3<cutoffs # FDR
+```
+
+
+### Looking at factors separately
+
+You may want to directly test hypotheses regarding the individual marginal effects, without taking into account interaction. You may decide to do so due to prior knowledge about there being no interaction or if you want to identify promising interventions for further analysis.
+
+We write out one-sided hypotheses as:
+$$
+H^k_0: \tau_{[k]}(1,0)  = 0 \\
+H^k_A: \tau_{[k]}(1,0)  > 0 \\
+\textrm{For each } k = 1, 2
+$$
+
+We will test these hypotheses in separate linear models, to avoid challenges with correlation if that were the case. Again, these models are equivalent to the difference in means estimates. 
+<!-- We've used `lm_robust` here, which by default will produce (HC2) heteroskedasticity robust standard errors; if we were to use difference in means estimates, we would want to make sure we calculate the standard errors appropriately.
+# TODO: show difference in means estimate, and how to calculate heteroskedasticity robust SE by hand here? -->
+```{r lm-dm}
+(lm1 <- lm_robust(y ~ w1))
+(lm2 <- lm_robust(y ~ w2))
+```
+Note that `lm_robust` produces a p-value and confidence intervals for a *two-sided* hypothesis; to calculate the appropriate p-value for a *one-sided* hypothesis, we plug the relevant values in the distribution function for the student t-distribution.
+
+<!--
+```{r lm-dm2}
+(lm1 <- lm_robust(y ~ w1 + w2))
+```
+-->
+
+Now let us test the two hypotheses for the two average marginal effects.
+
+```{r mce_hyp}
+hyp1 <- pt(lm1$statistic, lm1$df, lower = FALSE)[2] # get the pvalue for the first hypothesis
+hyp2 <- pt(lm2$statistic, lm2$df, lower = FALSE)[2] # get the pvalue for the second hypothesis
+hyp1
+hyp2
+```
+The p-values for our one-sided hypotheses are `r round(hyp1,3)` and `r round(hyp2,3)`. Therefore, using an $alpha=0.05$, we reject the null hypotheses for each factor.
+
+Note that because we have two factors here, we can define power as the probability that we will reject at least one of the null hypotheses under the alternative hypotheses, for the two marginal effects. 
+
+
+
+```{r hyp_bf}
+hyp1<(alpha/2) # Bonferroni correction with n=2
+hyp2<(alpha/2)
+```
+
+One of the commonly claimed advantages of a factorial design is its power gain in detecting marginal effects of individual factors. However, this requires you to make important assumptions about the interaction effects being zero.
+
+
+## Power calculations
+
+When you are planning an experiment, you will need to estimate the sample size required to detect a treatment effect. When designing a factorial experiment, there are different types of effects that you might be interested in, as we have seen above. The decision depends on your goal in the experiment.
+
+You may be more interested in having enough power to, 
+1) detect a particular interaction effect between two factors (e.g. is the interaction effect between the length of instruction and format of instruction large enough that we should focus on the average combination effects?),
+2) detect a marginal effect of at least one of the factors (e.g. does any of the factors change the result?)
+3) detect all the marginal effects. 
+
+For 1), since your interest is only on one particular effect, you would not need to adjust for multiple hypothesis testing. However, for the other cases, you would need to adjust for multiple hypothesis testing.
+
+**Reminder:** If you are doing a pilot and selecting prototypes for further investigation, you can use BH algorithm for FDR control. However, if you are making a final recommendation, you will want to use Bonferroni correction for FWER control.
+
+Let us now look at how you would conduct power calculations, and sample size calculations to achieve a target power for each of the 3 different power definitions. Remember to ensure that the simulations are appropriately sized for the *total* experiment size. 
+
+### Example: Simulated Factorial Experiment
+
+First, we define a function that will produce regression results for a simulated factorial experiment.
+
+To use this function, you will need to provide the sample size, the treatment assignment probabilities, hypothesized marginal effects of each level of each factor, and hypothesized interaction effects. 
+
+The simulation produces simulated outcome data based on the hypothesized effects, with added noise, which is left constant across treatment conditions. The function then produces regression results, for both a model with interaction, and a model without interaction.
+
+```{r lm_model}
+# analysis of a simulated experiment
+lm_interacted_model <- function(N,
+                                # probability of treatment assignment, 
+                                # separate entry for each factor, 
+                                # entries will be normalized to sum to 1
+                                p_list = list(c(0.75, 0.25),
+                                              c(0.25, 0.5, 0.25),
+                                              c(0.25, 0.75)), 
+                                # intercept (potential outcome at all baseline)
+                                b0 = 0, 
+                                # main effects above baseline, 
+                                # separate entry for each factor level
+                                b_main_list = list('w1.1' = c(0.1),
+                                                   'w2.1' = c(0.2),
+                                                   'w2.2' = c(0.3),
+                                                   'w3.1' = c(0.5)), 
+                                # 2-way interactions
+                                b_2wy_list = list('w1.1:w2.1' = c(0.01),
+                                                  'w1.1:w2.2' = c(0.02),
+                                                  'w1.1:w3.1' = c(0.03),
+                                                  'w2.1:w3.1' = c(0.04),
+                                                  'w2.2:w3.1' = c(0.05)), 
+                                # 3-way interactions
+                                b_3wy_list = list('w1.1:w2.1:w3.1' = c(0.001),
+                                                  'w1.1:w2.2:w3.1' = c(0.002)),
+                                # noise, residual error
+                                sigma = 1 
+) {
+  
+  K <- length(p_list) # number of factors
+  degree = ifelse(!is.null(b_3wy_list), 3, 2) # max order of interaction in the model
+  
+  # Count number of levels in each factor
+  L_list <- list()
+  for(k in 1:length(p_list)){
+    L_list[[paste0('L', k)]] <- length(p_list[[k]]) # naming the levels
+  }
+  number_marginal = (sum(unlist(L_list))-length(L_list)) # number of marginal effects
+  
+  # complete randomization of treatment assignment
+  wmat <- as.data.frame(lapply(1:K, function(k)
+    factor(
+      complete_ra(N, 
+                  num_arms = L_list[[k]], 
+                  prob_each = p_list[[k]]),
+      levels = paste0('T', 1:L_list[[k]]),
+      labels = 1:L_list[[k]]
+    ) ))
+
+  # add names for the treatment assignment  
+  colnames(wmat) <- paste0('w', 1:K, '.')
+  
+  # simulation based on provided data generation process 
+  mmat <- model.matrix(formula(paste0('~.^', degree)) , as.data.frame(wmat)) # indicators for whether to include w1, w2 and the interaction
+  betas <- unlist(c(b0, b_main_list, b_2wy_list, b_3wy_list)) # define the betas
+  y <- as.vector(mmat %*% betas + rnorm(N, sd = sigma)) # simulate outcomes
+  
+  # analysis of outcomes by including interaction in the model
+  lm_long <- lm_robust(y~., data = as.data.frame(cbind(y, mmat[,-1]))) # regression of simulated outcome on all the indicators except intercept
+
+  # analysis of outcomes by excluding interactions in the model  
+  lm_short <- lm_robust(y~., data = as.data.frame(cbind(y, mmat[,1:number_marginal+1]))) # regression of simulated outcome on all the indicators except intercept and interaction
+  
+  return(list(lm_long,lm_short))
+}
+```
+
+Imagine that you are planning a 2x2 factorial experiment with balanced assignment. Moreover, after consulting previous studies, your team has made some hypotheses regarding the marginal effects of the factors and the size of the interaction effect.
+
+Now let us look at what power would be over a range of possible sample size. Again, we will look at the different definitions of power, for detecting the interaction effect, detecting one marginal effect, and for detecting all the marginal effects. Moreover, we use either Bonferroni or FDR controls for the latter two power definitions to control for multiple testing.
+
+```{r power_simulated}
+possible.ns <- seq(from = 500, to = 5000, by = 50) # possible total sample size
+power.interaction <- rep(NA, length(possible.ns)) # save power to detect the specified interaction effect
+power.onemarginal <- rep(NA, length(possible.ns)) # save power to detect at least one of the marginal effects
+power.allmarginals <- rep(NA, length(possible.ns)) # save power to detect all marginal effects, with Bonferroni correction
+power.all_FDR <- rep(NA, length(possible.ns)) # save power to detect all marginal effects, with FDR control
+
+# setup for hypothesis testing
+alpha <- 0.05  # significance level
+sims <- 5e2 # 500 simulations
+hypotheses <- c('greater', 'greater', 'two.tailed') # hypothesis type for marginal effect 1, marginal effect 2, and interaction effect
+n <- length(hypotheses) # total number of hypotheses 
+m <- 3 # index of particular interaction to test
+
+# design choice
+p_list <- list(c(0.5, 0.5),
+               c(0.5, 0.5)) # balanced design
+
+# hypothesized effects
+b1 <- 0.5
+b2 <- 0.75
+b3 <- -0.6
+b0 <- 1 # same as alpha_0 in the above equation
+b_main_list <- list('w1.1' = b1,
+                    'w2.1' = b2) # average combination effect
+b_2wy_list <- list('w1.1:w2.1' = b3) # two way interaction
+sigma <- 2
+
+#### Outer loop to vary the experiment size
+for (j in 1:length(possible.ns)) {
+  N <- possible.ns[j]
+  # Count number of levels in each factor
+  L_list <- list()
+  for(k in 1:length(p_list)){
+    L_list[[paste0('L', k)]] <- length(p_list[[k]]) # naming the levels
+  }
+  number_marginal = (sum(unlist(L_list))-length(L_list)) # number of marginal effects
+
+  # hold the p values and coefficients from both long and short models
+  pvec <- cvec <- matrix(NA, sims, n)
+  pvec_s <- cvec_s <- matrix(NA, sims, number_marginal)
+    
+  #### Inner loop to conduct experiments "sims" times over for each N ####
+  for (i in 1:sims) {
+    
+    # apply the analysis function defined above
+    fits <- lm_interacted_model(N,
+                                p_list = p_list, # randomization probs
+                                b0 = b0, # intercept
+                                b_main_list = b_main_list, # main effects
+                                b_2wy_list = b_2wy_list, # 2-way
+                                b_3wy_list = NULL,# No 3-way interactions 
+                                sigma = sigma)
+    fit0 <- fits[[1]] # long model with interaction
+    fit1 <- fits[[2]] # short model without interaction # TODO: not used not, check back see if needed
+    
+    ### To capture coefficients and pvalues, according to the hypothesis type
+    for(h in 1:length(hypotheses)){
+      if(hypotheses[h] == 'two.tailed'){
+        pvec[i,h] <- summary(fit0)$coefficients[h + 1, 4] # pvalues for the h-th indicator (+1 due to intercept), 4th column: p-value for a two-sided test
+        cvec[i,h] <- TRUE     # check if sign of coefficient is consistent with the hypothesis
+      } else if (hypotheses[h] == 'greater'){
+        pvec[i,h] <- pt(coef(summary(fit0))[h + 1, 3], fit0$df[h + 1], # 3rd column: t-stat
+                        lower.tail = FALSE
+        )
+        cvec[i,h] <- summary(fit0)$coefficients[h + 1, 1]>0 # greater: >0 
+      } else if (hypotheses[h] == 'lower'){
+        pvec[i,h] <- pt(coef(summary(fit0))[h + 1, 3], fit0$df[h + 1],
+                        lower.tail = TRUE) 
+        cvec[i,h] <- summary(fit0)$coefficients[h + 1, 1]<0 # lower: <0
+      }
+    }
+    # from short model without interactions
+    for(s in 1:number_marginal){
+      if(hypotheses[s] == 'two.tailed'){
+        pvec_s[i,s] <- summary(fit1)$coefficients[s + 1, 4] 
+        
+        cvec_s[i,s] <- TRUE
+      } else if (hypotheses[s] == 'greater'){
+        pvec_s[i,s] <- pt(coef(summary(fit1))[s + 1, 3], fit1$df[s + 1],
+                        lower.tail = FALSE
+        )
+        cvec_s[i,s] <- summary(fit1)$coefficients[s + 1, 1]>0
+      } else if (hypotheses[s] == 'lower'){
+        pvec_s[i,s] <- pt(coef(summary(fit1))[s + 1, 3], fit1$df[s + 1],
+                        lower.tail = TRUE) 
+        cvec_s[i,s] <- summary(fit1)$coefficients[s + 1, 1]<0
+      }
+    }
+  }
+
+
+  
+  # power for detecting the chosen interaction with index m
+  power.interaction[j] <- mean(sapply(1:sims, function(x)
+    cvec[x, m]*(pvec[x, m]<alpha) # not adjusted since only testing one hypothesis
+    )) # get pvalues and coefficients of the relevant interaction term
+  
+  # power for detecting at least one interaction
+  # power.atleastoneinteraction[j] <- mean(sapply(1:sims, function(x)
+    #max(cvec[x, (sum(unlist(L_list))-length(L_list)+1):n]*(pvac[x, (sum(unlist(L_list))-length(L_list)+1):n]<alpha/n) )
+    #) # get pvalues and coefficients of the interaction term
+    
+  # power for detecting at least one marginal effect
+  power.onemarginal[j] <- mean(sapply(1:sims, function(x)
+    max(cvec_s[x,]*(pvec_s[x,]<alpha/number_marginal))==1)) # Bonferroni or FDR
+  
+  # power for detecting all marginal effects
+  power.allmarginals[j] <- mean(sapply(1:sims, function(x) 
+    all(cvec_s[x,]*(pvec_s[x,]<(alpha/number_marginal))) )) # Bonferroni
+  
+  # note that power for detecting at least one is the same with Bonferroni or FDR, but not the power for detecting all effects
+  power.all_FDR[j] <- mean(sapply(1:sims, function(x) 
+    all(cvec_s[x,]*(pvec_s[x,]<alpha)) )) # FDR - cutoff for the max pvalue is alpha
+}
+
+```
+
+Next, let us plot the Power graph and look at the sample size needed to attain a power of 0.8 for the different power definition.
+
+```{r power_simulated_graph}
+
+# save simulated power data
+gg_df2 <- data.frame(
+  N = possible.ns, 
+  Interaction = power.interaction,
+  `At least one` = power.onemarginal,
+  `All with Bonferroni` = power.allmarginals,
+  `All with FDR` = power.all_FDR
+)
+
+# start the plot
+gg_df2 <- gg_df2 %>% melt(
+  id.vars = "N", value.name = "Power", # the y-axis
+  variable.name = "Type" # legend
+)
+
+# plotting power against sample size by type of power
+ggplot(data = gg_df2, aes(x = N, y = Power, group = Type, col = Type)) + # power against size
+  geom_point() +
+  # vertical line indicating sample size where power first exceeds 0.8
+  geom_segment(aes(
+    x = possible.ns[min(which(power.interaction>0.8))],
+    y = 0,
+    xend = possible.ns[min(which(power.interaction>0.8))],
+    yend = 0.8
+  ),
+  data = gg_df2, colour = "blue", lty = "dashed"
+  ) +
+  # horizontal line indicating sample size where power first exceeds 0.8
+  geom_segment(aes(
+    x = min(possible.ns),
+    y = 0.8,
+    xend = possible.ns[min(which(power.interaction>0.8))],
+    yend = 0.8
+  ),
+  data = gg_df2, colour = "blue", lty = "dashed"
+  ) +
+  # vertical line indicating sample size where power first exceeds 0.8
+  geom_segment(aes(
+    x = possible.ns[min(which(power.allmarginals>0.8))],
+    y = 0,
+    xend = possible.ns[min(which(power.allmarginals>0.8))],
+    yend = 0.8
+  ),
+  data = gg_df2, colour = "blue", lty = "dashed"
+  ) +
+  # horizontal line indicating sample size where power first exceeds 0.8
+  geom_segment(aes(
+    x = min(possible.ns),
+    y = 0.8,
+    xend = possible.ns[min(which(power.allmarginals>0.8))],
+    yend = 0.8
+  ),
+  data = gg_df2, colour = "blue", lty = "dashed"
+) +
+  # vertical line indicating sample size where power first exceeds 0.8
+  geom_segment(aes(
+    x = possible.ns[min(which(power.all_FDR>0.8))],
+    y = 0,
+    xend = possible.ns[min(which(power.all_FDR>0.8))],
+    yend = 0.8
+  ),
+  data = gg_df2, colour = "blue", lty = "dashed"
+  ) +
+  # horizontal line indicating sample size where power first exceeds 0.8
+  geom_segment(aes(
+    x = min(possible.ns),
+    y = 0.8,
+    xend = possible.ns[min(which(power.all_FDR>0.8))],
+    yend = 0.8
+  ),
+  data = gg_df2, colour = "blue", lty = "dashed"
+  ) +
+  # vertical line indicating sample size where power first exceeds 0.8
+  geom_segment(aes(
+    x = possible.ns[min(which(power.onemarginal>0.8))],
+    y = 0,
+    xend = possible.ns[min(which(power.onemarginal>0.8))],
+    yend = 0.8
+  ),
+  data = gg_df2, colour = "blue", lty = "dashed"
+  ) +
+  # horizontal line indicating sample size where power first exceeds 0.8
+  geom_segment(aes(
+    x = min(possible.ns),
+    y = 0.8,
+    xend = possible.ns[min(which(power.onemarginal>0.8))],
+    yend = 0.8
+  ),
+  data = gg_df2, colour = "blue", lty = "dashed"
+  ) +
+  scale_y_continuous(breaks = seq(0.2, 1, .2)) # y axis scale
+```
+Note that we first achieve power of 0.8 for detecting at least one of the marginal effects at N = `r possible.ns[which.max(power.onemarginal>0.8)]`. For all marginal effects, we need an N of  `r possible.ns[which.max(power.allmarginals>0.8)]` when we are using Bonferroni, and `r possible.ns[which.max(power.all_FDR>0.8)]` when we are using FDR control. To detect the interaction effect, we need an N of `r possible.ns[which.max(power.interaction>0.8)]`. 
+
+
+<!-- TODO: include another function that plots sample size as a function of hypothesized effects? -->
+
+### Optimal Treatment-Control Split
+
+Like in a multiarm experiment, the assignment to treatment conditions depends on both the cost of treatment, and your goal.
+
+If the main cost is data collection, and if you goal is to compare each treatment condition against the control, for example, when your control is a viable choice, a balanced design where an equal number of individuals are assigned to each condition is optimal.
+
+If your goal is to compare some of the treatment conditions against each other, you would want to assign more to those conditions.
+
+### Another Note on Pre-test/Post-test Design
+
+As mentioned before, using a pre-test/post-test design can increase power of our model. However, that relies on us having fairly strong beliefs about effects of pre-treatment results to be able to do so. 
+
+### Comprehension check
+> Suppose you are planning a 2x2 experiment. If your manageris most interested in testing if any of the factor is effective, what would your hypotheses be? How many observations would you target for?
+
+
+```{r power_example2}
+
+# [YOUR CODE HERE - modify from the `power_simulated` code chunk above. This is also what you would be doing in your own planning.]
+
+```
+
+
+
+## References
+
+- Dasgupta, T., Pillai, N., & Rubin, D. (2015). Causal inference from 2 K factorial designs by using potential outcomes. Journal of the Royal Statistical Society. Series B (Statistical Methodology), 77(4), 727-753. Retrieved February 2, 2021, from http://www.jstor.org/stable/24775307
+- Naoki Egami & Kosuke Imai (2019) Causal Interaction in Factorial Experiments: Application to Conjoint Analysis, Journal of the American Statistical Association, 114:526, 529-540, DOI: 10.1080/01621459.2018.1476246
