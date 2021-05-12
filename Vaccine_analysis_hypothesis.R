@@ -5,14 +5,18 @@ library(fastmatch)
 library(readstata13)
 library(ggplot2)
 library(scales)
+library(estimatr)
 library(lubridate)
 library(zoo)
 
 
 rm(list=ls())
 setwd("/Users/ziao/Desktop/ALP301/Data")
-data = as.data.table(read.csv("Academic_Survey_Research_in_Africa_2021_05_07_16_20_16.csv", 
-                                  na.strings=c("","NA"), header = T))
+## load data, latest version is 2021_05_11_21_29_00 and it has 2380 obs
+data = as.data.table(read.csv("Academic_Survey_Research_in_Africa_2021_05_11_21_29_00.csv", 
+                              na.strings=c("","NA"), header = T))
+names(data)
+
 ## keep obs with pre and post outcomes
 data = data[!is.na(dv_pre1) & !is.na(dv_post3),]
 ## text cleaning of pre and post outcomes (to lower cases)
@@ -58,7 +62,7 @@ table_function = function(study = "nudge", model = model){
     table[, group:=1:2]
   }
   table$pvalues = as.character(round(table$pvalues,digits=3))
-  table[, signif:= ifelse(table$pvalues<0.01,1,0)]
+  table[, signif:= ifelse(table$pvalues<0.05,1,0)]
   table[, position:=ifelse(coeffs>=0, coeffs+0.005,0.005)]
   table = as.data.frame(table)
   return(table)
@@ -96,25 +100,25 @@ plot_function = function(study = "nudge", table = table, filename = filename){
 
 ## Model 1: post only, no covariates
 model1 = lm_robust(post_share ~ concern+endorse+realinfo+relate+safety, data = nudge_data)
-table1 = table_function(model1)
-plot_function(table1, filename = "nudge_post_nocov")
+table1 = table_function("nudge",model1)
+plot_function("nudge", table1, filename = "nudge_post_nocov")
 
 ## Model 2: post only, with demographic controls
 model2 = lm_robust(post_share ~ concern+endorse+realinfo+relate+safety+
                      as.factor(cv_gender) + as.factor(province) + cv_age, data = nudge_data)
-table2 = table_function(model2)
-plot_function(table2, filename = "nudge_post_demographics")
+table2 = table_function("nudge",model2)
+plot_function("nudge",table2, filename = "nudge_post_demographics")
 
 ## Model 3: pre-post , no covariates
 model3 = lm_robust(pre_post ~ concern+endorse+realinfo+relate+safety, data = nudge_data)
-table3 = table_function(model3)
-plot_function(table3, filename = "nudge_prepost_nocov")
+table3 = table_function("nudge",model3)
+plot_function("nudge",table3, filename = "nudge_prepost_nocov")
 
 ## Model 4: pre-post , with demographic controls
 model4 = lm_robust(pre_post ~ concern+endorse+realinfo+relate+safety+
                      as.factor(cv_gender) + as.factor(province) + cv_age, data = nudge_data)
-table4 = table_function(model4)
-plot_function(table4, filename = "nudge_prepost_demographics")
+table4 = table_function("nudge",model4)
+plot_function("nudge",table4, filename = "nudge_prepost_demographics")
 
 
 
